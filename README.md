@@ -1,2 +1,2 @@
 # SB3204C
-4x29Gbps BERT
+4x29Gps BERT
