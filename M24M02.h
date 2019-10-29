@@ -54,6 +54,7 @@
 #include "LMXFrequencyProfile.h"
 
 
+
 class M24M02 : public BertComponent
 {
     Q_OBJECT
@@ -68,18 +69,26 @@ public:
 
     int readFrequencyProfiles(int deviceID, QList<LMXFrequencyProfile> &frequencyProfiles);
     int writeFrequencyProfiles(int deviceID, QList<LMXFrequencyProfile> &frequencyProfiles);
+  //  void WriteFirmare(int deviceID);
+
+
+
+
+    QString ReadModelCode();
 
 #define M24M02_SIGNALS \
     void EEPROMStringData(int deviceID, QString model, QString serial, QString productionDate, QString calibrationDate, QString warrantyStart, QString warrantyEnd, QString synthConfigVersion);
 
 #define M24M02_SLOTS \
     void EEPROMReadStrings(int deviceID); \
-    void EEPROMWriteStrings(int deviceID, QString model, QString serial, QString productionDate, QString calibrationDate, QString warrantyStart, QString warrantyEnd, QString synthConfigVersion);
+    void EEPROMWriteStrings(int deviceID, QString model, QString serial, QString productionDate, QString calibrationDate, QString warrantyStart, QString warrantyEnd, QString synthConfigVersion);\
+    void WriteFirmware(int deviceID);
 
 #define M24M02_CONNECT_SIGNALS(CLIENT, M24M02) \
     connect(M24M02, SIGNAL(EEPROMStringData(int, QString, QString, QString, QString, QString, QString, QString)),   CLIENT, SLOT(EEPROMStringData(int, QString, QString, QString, QString, QString, QString, QString)));    \
     connect(CLIENT, SIGNAL(EEPROMReadStrings(int)),                                                                 M24M02, SLOT(EEPROMReadStrings(int)));                                                                  \
     connect(CLIENT, SIGNAL(EEPROMWriteStrings(int, QString, QString, QString, QString, QString, QString, QString)), M24M02, SLOT(EEPROMWriteStrings(int, QString, QString, QString, QString, QString, QString, QString)));  \
+    connect(CLIENT, SIGNAL(WriteFirmware(int)),                                                                     M24M02, SLOT(WriteFirmware(int)));                                                                  \
     BERT_COMPONENT_CONNECT_SIGNALS(CLIENT, M24M02)
 
 signals:
@@ -120,6 +129,8 @@ private:
     // Page Ids:
     static const uint8_t PAGE_STRINGS       = 0;
     static const uint8_t PAGE_FREQ_PROFILES = 2;
+    static const uint8_t PAGE_Firmware      = 3;
+
 
     // Max block sizes
     static const int WRITE_BLK_SIZE = 59;  // Limit of USB-I2C Adaptor write buffer
@@ -145,6 +156,7 @@ private:
 
     int storeFrequencyProfile(uint16_t *address, LMXFrequencyProfile &profile);
     int loadFrequencyProfile(uint16_t *address, LMXFrequencyProfile &profile);
+
 
     int clearEEPROM();
     int clearPROFILES();

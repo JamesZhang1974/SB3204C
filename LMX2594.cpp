@@ -9,7 +9,7 @@
 
 #include "globals.h"
 #include "BertFile.h"
-
+#include "math.h"
 #include "LMX2594.h"
 
 
@@ -56,8 +56,8 @@ const uint8_t LMX2594::POWER_15DBM = 60;    // UNUSED!
 const QStringList LMX2594::TRIGOUT_POWER_LIST = { " 0 dBm", " 5 dBm" };    //
 const QList<uint8_t> LMX2594::POWER_CONSTS = { POWER_0DBM, POWER_5DBM };   // Used for trigger out (Main out fixed at 0 dBm)
 
-const size_t LMX2594::DEFAULT_FOUT_POWER_INDEX = 0;    // Default power setting for main clock (0 bBm)
-const size_t LMX2594::DEFAULT_TRIG_POWER_INDEX = 1;    // Default power setting for trigger out (5 DBM)
+const size_t LMX2594::DEFAULT_FOUT_POWER_INDEX = 0;    // Default power setting for main clock (0 dBm)
+const size_t LMX2594::DEFAULT_TRIG_POWER_INDEX = 0;    // Default power setting for trigger out (0 dBm)
 
 
 QList<LMXFrequencyProfile> LMX2594::frequencyProfiles = QList<LMXFrequencyProfile>();
@@ -69,7 +69,8 @@ uint16_t LMX2594::profileIndexDefault = 0;    // Index of default start-up frequ
 QList<LMXFrequencyProfile> LMX2594::frequencyProfilesFromFiles = QList<LMXFrequencyProfile>();
 QStringList LMX2594::frequencyListFromFiles = QStringList();
 
-
+//QList<GennumFirmware> LMX2594::firmwareFromFiles = QList<GennumFirmware>();
+//QStringList LMX2594::firmwareListFromFiles = QStringList();
 
 
 // Bit patterns for Register 0:
@@ -83,7 +84,7 @@ const uint16_t LMX2594::R0_RESET             = 0b0000000000000010;  // RESET bit
 const uint16_t LMX2594::R0_POWERDOWN         = 0b0000000000000001;  // POWERDOWN bit
 
 const uint16_t LMX2594::R0_FCAL_XXXX_ADJ_MASK = 0b0000000111100000;  // Mask to preserve ONLY FCAL_XXXX_ADJ bits
-
+const uint16_t LMX2594::R0_ANYRATE            = 0b0010010100011100;  // When select Anyrate, R0 is 9500
 // Default value to load into R0 for normal running:
 // Define "LD_LED_ENABLE" to enable the MUXout pin as Lock Detect (Enables Lock LED)
 // If undefined, the MUXout pin will function as MISO for SPI data.
@@ -99,13 +100,21 @@ const uint16_t LMX2594::R0_DEFAULT = LMX2594::R0_NOTHING         // Preset bits 
 // (CAL_CLK_DIV field and OUT_FORCE bit):
 const uint16_t LMX2594::R1_DEFAULT     = 0b0000100000001000;  // Set up CAL_CLK_DIV for 100 MHz Input Oscillator
 const uint16_t LMX2594::R7_DEFAULT     = 0b0100000010110010;  // Make sure OUT_FORCE is ON (required when NOT using OUT_MUTE in R0)
+const uint16_t LMX2594::R9_OSC2        = 0b0001011000000100;  //Doubler is 2
+const uint16_t LMX2594::R9_OSC1        = 0b0000011000000100;  //Doubler is 1
 
-const uint16_t LMX2594::R31_DEFAULT    = 0b0000001111101100;  // CHDIV_DIV2 Disabled (for CHDIV <= 2)
+const uint16_t LMX2594::R31_DEFAULT    = 0b0000001111101100;  // CHDIV_DIV2 Disabled (for Channel_DIV = 2)
+const uint16_t LMX2594::R31_CHDIV      = 0b0100001111101100;   //CHDIV_DIV2 enabled (for Channel_IV > 2)
+const uint16_t LMX2594::R37_DEFAULT    = 0b0000011000000100;   //PFD_DLY_SEL = 6 when PLL_N >=48
+const uint16_t LMX2594::R37_CHDIV      = 0b0000010100000100;   //PFD_DLY_SEL = 5 when PLL_N < 48
+const uint16_t LMX2594::R39_ANYRATE    = 0b1111111111111111;   //PLL_DEN(31:16)
+const uint16_t LMX2594::R38_ANYRATE    = 0b1111111111111111;   //PLL_DEN(15:0)
+const uint16_t LMX2594::R44_DEFAULT    = 0b0000000011100000;  // OutA Power at minimum; Outputs A and B powered down; Other bits default
+const uint16_t LMX2594::R44_ANYRATE    = 0b0001000000100100;  // MASH_ORDER is 4
 
-const uint16_t LMX2594::R44_DEFAULT    = 0b0000000011100000; // OutA Power at minimum; Outputs A and B powered down; Other bits default
-
-const uint16_t LMX2594::R45_DEFAULT    = 0b1100111011000000; // OUTA_MUX = VCO; ISET = Min (11); OUTB_PRW = Minimum
-const uint16_t LMX2594::R45_OUTA_CHDIV = 0b1100011011000000; // OUTA_MUX = CHDIV; ISET = Min (11); OUTB_PRW = Minimum
+const uint16_t LMX2594::R45_ANYRATE    = 0b1100000011000000; // OUTA_MUX = 0; OUT_ISET = 0; OUTB_PWR = 0;
+const uint16_t LMX2594::R45_OUTA_CHDIV = 0b1100000011010000; // OUTA_MUX = CHDIV; ISET = 0; OUTB_PRW = 010000;
+const uint16_t LMX2594::R45_DEFAULT    = 0b1100100011010000; // OUTA_MUX = VCO; ISET = 0; OUTB_PWR = 010000;
 
 const uint16_t LMX2594::R46_DEFAULT    = 0b0000011111111101; // OUTB_MUX = VCO
 const uint16_t LMX2594::R46_OUTB_CHDIV = 0b0000011111111100; // OUTB_MUX = CHDIV (DIVIDED output)
@@ -323,8 +332,7 @@ int LMX2594::init()
     {
         float thisFrequency = profile.getFrequency();
         frequencyList.append(
-                    QString().sprintf("%2.5f GHz  (%2.5f Gbps)",
-                                      static_cast<double>(thisFrequency) / 1000.0,
+                    QString().sprintf("%2.5f Gbps",
                                       static_cast<double>(thisFrequency) / 500.0)
                     );
         // Profiles should already be sorted by frequency.
@@ -376,6 +384,16 @@ void LMX2594::GetLMXInfo()
 }
 
 
+void LMX2594::getAnyRateLMXInfo(double frequency)
+{
+    emit LMXInfo(deviceID,
+                 99,
+                 selectedTrigOutputPowerIndex,
+                 selectedFOutOutputPowerIndex,
+                 selectedTrigDivideIndex,
+                 flagOutputsOn,
+                 frequency);
+}
 /*!
  \brief Get LMX VTune Lock Status Slot: Request for the current state of VCO VTune Lock
  NOTE: This reads the 'rb_LD_VTUNE' value from Register 110. To work, the MUXout pin MUST
@@ -427,6 +445,30 @@ void LMX2594::SelectProfile(int indexProfile, bool triggerResync)
     }
     GetLMXInfo();                                         // Update the client to reflect the new settings
     if (triggerResync) emit LMXSettingsChanged(deviceID); // Inform the client that settings have changed - other parts of the system may need to resync.
+}
+
+/*!
+ \brief Slot: Select AnyRate frequency profile
+ \param PLL_N, PLL_NUM,Channel_DIV, PFD_DLY_SEL
+
+*/
+void LMX2594::AnyRateProfile(int D7, int D6, int D5, int D4, int D3, int D2, int D1, int D0)
+{
+    DEBUG_LMX("LMX2594: Input custom frequency profile  on Clock " << deviceID)
+    emit ShowMessage("Changing Synthesizer Frequency...");
+    int result = anyRateProfile(D7,D6,D5,D4,D3,D2,D1,D0);
+    if (result == globals::OK)
+    {
+        emit Result(globals::OK, globals::ALL_LANES);
+        emit ShowMessage("OK.");
+        emit LMXSettingsChanged(deviceID);// // Inform the client that settings have changed - other parts of the system may need to resync.
+    }
+    else
+    {
+        emit ShowMessage("Error selecting frequency!");
+        emit Result(result, globals::ALL_LANES);
+    }
+
 }
 
 
@@ -500,6 +542,55 @@ void LMX2594::ConfigureOutputs(int indexFOutOutputPower, int indexTrigOutputPowe
 }
 
 
+void LMX2594::ConfigureOutputs_Debug(int ISET, int A1, int A0, int B1, int B0)
+{
+    DEBUG_LMX("LMX: Debugging configure outputs on clock")
+    uint16_t Out_ISET = ISET;
+    uint8_t OutA_PWR = A1 * 10 + A0;
+    uint8_t OutB_PWR = B1 * 10 + B0;
+    uint16_t R44 = 0 ;
+    uint16_t R45 = 0 ;
+    bool bFound44 = false;
+    bool bFound45 = false;
+
+    if (selectedProfileIndex < frequencyProfiles.count())
+    {
+        R44 = frequencyProfiles.at(selectedProfileIndex).getRegisterValue(44, &bFound44);
+        R45 = frequencyProfiles.at(selectedProfileIndex).getRegisterValue(45, &bFound45);
+    }
+    if (!bFound44) R44 = R44_DEFAULT;  // Default to use if no profile selected.
+    if (!bFound45) R45 = R45_DEFAULT;  // Default to use if no profile selected.
+    if(selectedProfileIndex == 99)
+    {
+        if(Channel_DIV ==1 ) { R44 = R44_ANYRATE; R45 = R45_DEFAULT; }
+        else                 { R44 = R44_ANYRATE; R45 = R45_OUTA_CHDIV;}
+    }
+
+        R44 = (R44 & 0x607F) | (OutA_PWR << 8);
+        R45 = (R45 & 0xF9C0) | (Out_ISET << 9) | OutB_PWR;
+
+    DEBUG_LMX("Set R44 to " << R44 << "; R45 to " << R45)
+    int result                        = writeRegister(44, R44);
+    if (result == globals::OK) result = writeRegister(45, R45);
+    DEBUG_LMX("Result: " << result)
+
+    if (result == globals::OK)
+    {
+        emit Result(globals::OK, globals::ALL_LANES);
+        emit ShowMessage("RF Output Power is reset.");
+    }
+    else
+    {
+        emit ShowMessage("Error configuring clock outputs!");
+        emit Result(result, globals::ALL_LANES);
+    }
+    //GetLMXInfo();    // Update the client to reflect the new settings
+    //if (majorSettingsChange && triggerResync) emit LMXSettingsChanged(deviceID);
+        // Inform the client that settings have changed - other parts of the system may need to resync.
+}
+
+
+
 void LMX2594::ReadTcsFrequencyProfiles(QString searchPath)
 {
     if (deviceID != 0) return;   // This slot is only implemented for MASTER LMX.
@@ -515,6 +606,7 @@ void LMX2594::ReadTcsFrequencyProfiles(QString searchPath)
         DEBUG_LMX("LMX2594: Error reading frequency profile files from path " << searchPath << ": " << result)
     }
 }
+
 
 
 void LMX2594::LMXEEPROMWriteFrequencyProfiles()
@@ -646,8 +738,34 @@ void LMX2594::ResetDevice()
     GetLMXInfo();  // Update the client to reflect the new settings
 }
 
+/*!
+ \brief Slot: Set LMX Enable status (enable / disable)
+  From LMX2594 Manual: "The LMX2594 can be powered up and down using the CE pin...
+  When the device comes out of the powered down state, register R0 must be
+  programmed with FCAL_EN high again to re-calibrate the device.
 
-
+ \param enabled
+*/
+void LMX2594::SetLMXEnable(bool enabled)
+{
+    DEBUG_LMX("LMX2594: Set Enabled State to " << enabled << " on clock " << deviceID)
+    int result = setLMXEnable(enabled);
+    if (result == globals::OK)
+    {
+        emit Result(globals::OK, globals::ALL_LANES);
+        if (enabled)
+        {
+            runFCal();     // This should be enough to get the clock locked again (see LMX manual)
+            GetLMXInfo();  // Update the client to reflect the new settings
+            emit LMXSettingsChanged(deviceID);   // Signal other devices that a clock change has occurred
+        }
+    }
+    else
+    {
+        emit ShowMessage("Error disabling/enabling clock!");
+        emit Result(result, globals::ALL_LANES);
+    }
+}
 
 
 
@@ -724,6 +842,8 @@ int LMX2594::getProfilesFromRegisterFiles(const QString registerFilePath, QStrin
         }
     }
 
+
+
     // Create list of frequency values to display in UI:
     uint16_t thisIndex = 0;
     QList<LMXFrequencyProfile>::iterator i;
@@ -731,8 +851,7 @@ int LMX2594::getProfilesFromRegisterFiles(const QString registerFilePath, QStrin
     {
         float thisFrequency = i->getFrequency();
         frequencyListFromFiles.append(
-                    QString().sprintf("%2.5f GHz  (%2.5f Gbps)",
-                                      static_cast<double>(thisFrequency) / 1000.0,
+                    QString().sprintf("%2.5f Gbps",
                                       static_cast<double>(thisFrequency) / 500.0)
                     );
         thisIndex++;
@@ -747,6 +866,7 @@ int LMX2594::getProfilesFromRegisterFiles(const QString registerFilePath, QStrin
 
     return globals::OK;
 }
+
 
 
 
@@ -935,6 +1055,7 @@ int LMX2594::selectProfile(int index)
         {
             // DEBUG_LMX("LMX2594: Write " << QString().sprintf("0x%04X", registerValue) << " to register " << registerAddress;
             result = writeRegister(registerAddress, registerValue);
+            DEBUG_LMX("LMX2594: register Address("<<registerAddress<<")<< Value is ("<<registerValue<<")")
             if (result != globals::OK)
             {
                 DEBUG_LMX("LMX2594: ERROR writing register! (" << result << ")")
@@ -956,6 +1077,159 @@ int LMX2594::selectProfile(int index)
     return globals::OK;
 }
 
+
+/*!
+ \brief Select Frequency Profile by Index
+ \param index               Index of profile to get frequency from - 0 is first
+ \return globals::OK        Item found for requested index.
+ \return globals::OVERFLOW  Index was larger than the list of frequency profiles
+ \return [Error Code]       Error from derived class implementation (selectProfilePart)
+*/
+int LMX2594::anyRateProfile(int D7, int D6, int D5, int D4, int D3, int D2, int D1, int D0)
+{
+    DEBUG_LMX("LMX2594: Set Custom frequency profile ")
+
+            DataRate = D7*10000000.0 + D6*1000000.0 + D5*100000.0 + D4*10000.0 + D3*1000.0 + D2*100.0 + D1*10.0 + D0*1.0; // read the data rate(Kbps) from GUI
+
+
+            auto const Fosc = 100000000.0;      //Fosc is 100MHz
+            auto Doubler = 2;
+            auto Fpd  = Fosc * Doubler;   //Fpd is 200MHz
+
+
+
+            RF_Output_Freq = (DataRate / 2.0) * 1000.0;    //output RF frequency(half-rate clock) to GT1724
+            uint16_t PLL_N;
+            uint32_t PLL_NUM;            
+            uint8_t DIV;
+
+
+
+            if((DataRate > 30000000.0)||(DataRate < 300000.0))
+            {
+                emit ShowMessage(QString("Invalid Data Rate:  %1 Gbps.").arg(DataRate/1000000.0, 0, 'Q',6));
+                return globals::WRITE_ERROR; // Allow to input again.
+            }
+                else emit ShowMessage(QString("Input Data Rate:  %1 Gbps.").arg(DataRate/1000000.0, 0, 'Q', 6));
+
+            if(RF_Output_Freq >= 7.5e9)
+            {
+                Channel_DIV = 1;
+                DIV = 0;
+                if(RF_Output_Freq < 8.0e9) { Doubler = 1; Fpd = Fosc * Doubler; }
+                PLL_N = floor(RF_Output_Freq/Fpd);
+                PLL_NUM = floor(((RF_Output_Freq/Fpd) - PLL_N) * PLL_DEN);
+                qDebug()<<"PLL_N is" << PLL_N << "PLL_NUM is"<<PLL_NUM <<"Channel Divider is" <<Channel_DIV;
+            }
+            else
+            {
+                if(RF_Output_Freq>=3.75e9)      {Channel_DIV = 2;  DIV = 0;}
+                else if(RF_Output_Freq>=2.5e9)  {Channel_DIV = 4;  DIV = 1;}
+                else if(RF_Output_Freq>=1.25e9) {Channel_DIV = 6;  DIV = 2;}
+                else if(RF_Output_Freq>=9.5e8)  {Channel_DIV = 8;  DIV = 3;}
+                else if(RF_Output_Freq>=6.75e8) {Channel_DIV = 12; DIV = 4;}
+                else if(RF_Output_Freq>=4.75e8) {Channel_DIV = 16; DIV = 5;}
+                else if(RF_Output_Freq>=3.2e8)  {Channel_DIV = 24; DIV = 6;}
+                else if(RF_Output_Freq>=2.375e8) {Channel_DIV = 32; DIV = 7;}
+                else if(RF_Output_Freq>=1.6e8)   {Channel_DIV = 48; DIV = 8;}
+                else                             {Channel_DIV = 64; DIV = 9;}
+                auto Fvco = RF_Output_Freq * Channel_DIV;
+                if((Fvco < 8.0e9)&&(Fvco >= 7.5e9)) { Doubler = 1; Fpd = Fosc * Doubler; }
+                PLL_N = floor(Fvco/Fpd);
+                PLL_NUM = floor(((Fvco/Fpd) - PLL_N) * PLL_DEN);
+                qDebug() <<" PLL_N is "<< PLL_N << "PLL_NUM is" << PLL_NUM <<"Channel Divider is"<<Channel_DIV;
+            }
+
+
+    int result;
+
+    selectedProfileIndex = 99;  //For AnyRate setup
+
+    resetDevice();
+
+    // Load registers in REVERSE ORDER; Don't load R0 (power control)
+    //CHDIV - R75 register setting
+    REGISTER[75] = R75_DEFAULT | (DIV<<6);
+
+    //OUTB_MUX - R46 register setting
+    if(Channel_DIV == 1)
+    {
+        REGISTER[46] = R46_DEFAULT;
+    }
+    else
+    {
+         REGISTER[46] = R46_OUTB_CHDIV;
+    }
+
+    //OUTA_MUX, OUT_ISET, OUTB_PWR - R45 register setting
+    if(Channel_DIV == 1)  REGISTER[45] = R45_DEFAULT;
+    else                  REGISTER[45] = R45_OUTA_CHDIV;
+
+
+
+    //MASH_ORDER & MASH_ENABLE - R44 register setting
+    REGISTER[44] = R44_ANYRATE;
+
+    //PLL_NUM(15:0) - R43 register setting
+    REGISTER[43] = PLL_NUM & 0x0000FFFF;
+
+    //PLL_NUM(31:16) - R42 register setting
+    REGISTER[42] = (PLL_NUM >> 16);
+
+    //PLL_DEN(15:0) - R39 register setting
+    REGISTER[39] = R39_ANYRATE;
+
+    //PLL_DEN(31:16) - R38 register setting
+    REGISTER[38] = R38_ANYRATE;
+
+    //PFD_DLY_SEL - R37 register setting
+    if(PLL_N >= 48)   REGISTER[37] = R37_DEFAULT;
+    else REGISTER[37] = R37_CHDIV;
+
+
+    //PLL_N - R36 register setting
+    REGISTER[36] = PLL_N;
+
+    //CHDIV_DIV2 - R31 register setting
+    if(Channel_DIV == 1||Channel_DIV == 2) REGISTER[31] = R31_DEFAULT;
+    else         REGISTER[31] = R31_CHDIV;
+
+    //Doubler - R9 register setting
+    if(Doubler == 1)  REGISTER[9] = R9_OSC1;
+    else              REGISTER[9] = R9_OSC2;
+
+    // Load registers in REVERSE ORDER; Don't load R0 (power control)
+    for (int Address = 112; Address > 0; Address--)
+    {
+
+            result = writeRegister(Address, REGISTER[Address]);
+            DEBUG_LMX("LMX2594: register Address("<<Address<<")<< Value is ("<<REGISTER[Address]<<")")
+            if (result != globals::OK)
+            {
+                DEBUG_LMX("LMX2594: ERROR writing register! (" << result << ")")
+                return globals::WRITE_ERROR;
+            }
+    }
+
+    // Restore the previous power and divider settings
+    // and turn outputs on:
+    flagOutputsOn = true;
+    configureOutputs();
+
+    // Calibrate: Required after changing PLL settings
+    runFCal();
+
+    DEBUG_LMX("LMX2594: Registers set for profile!")
+    emit LMXInfo(deviceID,
+                 selectedProfileIndex,
+                 selectedTrigOutputPowerIndex,
+                 selectedFOutOutputPowerIndex,
+                 selectedTrigDivideIndex,
+                 flagOutputsOn,
+                 (RF_Output_Freq/1e6));
+
+    return globals::OK;
+}
 
 /* DEPRECATED; To do if resurrecting: SWAP power settings (Trig and main RF outs have been swapped)
  * Output divide is now fixed (see setSafeDefaults)
@@ -1026,6 +1300,7 @@ int LMX2594::runFCal()
         R0 = frequencyProfiles.at(selectedProfileIndex).getRegisterValue(0, &bFound);
     }
     if (!bFound) R0 = R0_DEFAULT;
+    if (selectedProfileIndex == 99) R0 = R0_ANYRATE;
 
     // Clear the FCAL_EN bit:
     uint16_t tempR0 = R0 & ~R0_FCAL_EN;
@@ -1033,10 +1308,11 @@ int LMX2594::runFCal()
     int result;
     result = writeRegister(0, tempR0);  // FCCAL_EN low.
     if (result != globals::OK) return result;
-    globals::sleep(100);
+    globals::sleep(500);
 
     result = writeRegister(0, R0);  // Restore R0 (Should set FCAL_EN)
-    globals::sleep(100);
+    DEBUG_LMX("LMX2594: R0 is ("<<R0<<")")
+    globals::sleep(500);
     return result;
 }
 
@@ -1059,7 +1335,7 @@ int LMX2594::resetDevice()
         R0 = frequencyProfiles.at(selectedProfileIndex).getRegisterValue(0, &bFound);
     }
     if (!bFound) R0 = R0_DEFAULT;  // Default to use if no profile selected.
-
+    if(selectedProfileIndex == 99) R0 = R0_ANYRATE;
     return resetPart(R0);
 
 }
@@ -1196,33 +1472,41 @@ int LMX2594::resetPart(uint16_t defaultR0)
 
 int LMX2594::configureOutputs()
 {
-    uint16_t R44 = 0, R45 = 0;
-
-    // We need to use MASH_RESET_EN and MASH_ORDER fields from profile for Reg 44:
-    bool bFound44 = false;
-    bool bFound45 = false;
+    uint16_t R45, OUT_ISET, OUTB_PWR, OUTA_MUX;
+    double frequency;
 
     if (selectedProfileIndex < frequencyProfiles.count())
     {
-        R44 = frequencyProfiles.at(selectedProfileIndex).getRegisterValue(44, &bFound44);
-        R45 = frequencyProfiles.at(selectedProfileIndex).getRegisterValue(45, &bFound45);
+        frequency = frequencyProfiles.at(selectedProfileIndex).getFrequency();
+        frequency = frequency * 1000000.0;  //transfer from MHz to Hz;
+        DEBUG_LMX("The Frequency is" << frequency)
     }
-    if (!bFound44) R44 = R44_DEFAULT;  // Default to use if no profile selected.
-    if (!bFound45) R45 = R45_DEFAULT;  // Default to use if no profile selected.
+
+    else if(selectedProfileIndex == 99) frequency = RF_Output_Freq;
+    else return globals::OVERFLOW;
+
+    if(frequency >= 14.0e9)      { OUTB_PWR = 50; OUT_ISET = 1; OUTA_MUX = 1; }
+    else if(frequency >= 13.5e9) { OUTB_PWR = 48; OUT_ISET = 2; OUTA_MUX = 1; }
+    else if(frequency >= 13.0e9) { OUTB_PWR = 41; OUT_ISET = 2; OUTA_MUX = 1; }
+    else if(frequency >= 12.5e9) { OUTB_PWR = 44; OUT_ISET = 2; OUTA_MUX = 1; }
+    else if(frequency >= 12.0e9) { OUTB_PWR = 50; OUT_ISET = 2; OUTA_MUX = 1; }
+    else if(frequency >= 11.5e9) { OUTB_PWR = 48; OUT_ISET = 3; OUTA_MUX = 1; }
+    else if(frequency >= 11.0e9) { OUTB_PWR = 30; OUT_ISET = 3; OUTA_MUX = 1; }
+    else if(frequency >= 9.5e9)  { OUTB_PWR = 18; OUT_ISET = 3; OUTA_MUX = 1; }
+    else if(frequency >= 8.5e9)  { OUTB_PWR = 14; OUT_ISET = 3; OUTA_MUX = 1; }
+    else if(frequency >= 7.5e9)  { OUTB_PWR = 8;  OUT_ISET = 3; OUTA_MUX = 1; }
+    else if(frequency >= 6.5e9)  { OUTB_PWR = 3;  OUT_ISET = 3; OUTA_MUX = 0; }
+    else if(frequency >= 2.0e9)  { OUTB_PWR = 0;  OUT_ISET = 3; OUTA_MUX = 0; }
+    else                         { OUTB_PWR = 2;  OUT_ISET = 3; OUTA_MUX = 0; }
 
 
-    DEBUG_LMX("RF Pow Index: " << selectedFOutOutputPowerIndex << " = " << POWER_CONSTS[selectedFOutOutputPowerIndex])
+    R45 = R45_ANYRATE | (OUTA_MUX << 11) | (OUT_ISET << 9) | OUTB_PWR;
 
-    R44 = (R44 & 0xC03F) |  // Mask: OUTA_POW, OUTA_PD and OUTB_PD bits set to 0
-          (POWER_CONSTS[selectedFOutOutputPowerIndex] << 8) | // OUTA_POW
-          (((flagOutputsOn) ? 0x00 : 0x03) << 6);             // OUTA_PD and OUTB_PD
+    //select RF power output index
 
-    R45 = (R45 & 0xFFC0) |  // Mask: OUTB_PWR set to 0; other bits preserved
-           POWER_CONSTS[selectedTrigOutputPowerIndex];  // Set OUTB_POW
 
-    DEBUG_LMX("Set R44 to " << R44 << "; R45 to " << R45)
-    int result                        = writeRegister(44, R44);
-    if (result == globals::OK) result = writeRegister(45, R45);
+    DEBUG_LMX("Set R45 to " << R45)
+    int result = writeRegister(45, R45);
     DEBUG_LMX("Result: " << result)
     return result;
 
@@ -1319,6 +1603,63 @@ void LMX2594::setSafeDefaults()
 
 
 
+/*************************************************************************************/
+/* LMX Enable / Disable:                                                             */
+/*************************************************************************************/
+
+/*!
+ \brief Enable or Disable LMX2594
+ Assumes that the LMX is connected via the SC18IS602B I2C-SPI bridge,
+ and that Pin !SS3/GPIO3 on the SC18IS602B is connected to "EN" (Enable) on
+ the GT1724.
+
+ !SS3 is HIGH by power-on default, thus the GT1724 is usually enabled.
+
+ It is disabled below by pulling !SS3 low (i.e. setting correcponding bit in
+ the SC18IS602B Function ID byte).
+
+ \param enabled  New status for the GT1724
+
+ \return globals::OK               Success... Register data written
+ \return globals::NOT_INITIALISED  Clock interface hasn't been initialised yet
+ \return globals::OVERFLOW         Invalid register address
+ \return [error code]              Comms or adaptor error writing to LMX
+*/
+int LMX2594::setLMXEnable(bool enabled)
+{
+    if (!spiAdaptorIsOpen) return globals::NOT_INITIALISED;
+    int result;
+
+    // Configure SC18IS602B pin GPIO3 / !SS3 as GPIO:
+    // By default, GPIO pins are configured with weak pull up and strong pull down, which should be OK here.
+    const uint8_t gpioEnData[] = { 0xF6,                     // GPIO Enable
+                                   0x08 };                   // Enable GPIO3
+     result = comms->writeRaw(i2cAddress, gpioEnData, 2);
+#ifdef LMX_DEBUG
+     DEBUG_LMX("[SC18IS602B GPIO EN for LMX]")
+#endif
+    if (result != globals::OK)
+     {
+         qDebug() << "[SC18IS602B for LMX] Error setting up GPIO: " << result;
+         return result;
+     }
+
+    // GPIO3: To enable LMX, we want to set GPIO 3 high; To disable, set Low.
+    uint8_t gpioPins;
+    if (enabled) gpioPins = 0x08;   // 1000 = Set GPIO 3
+    else         gpioPins = 0x00;   // 0000 = Clear GPIO 3
+
+    // Set GPIO Pins on SC18IS602B: Instruction 0xF4
+    const uint8_t gpioData[] = { 0xF4,           // GPIO Write
+                                 gpioPins };     // Set the GPIO pins to 1100 (set GPIO 2 and 3).
+
+     result = comms->writeRaw(i2cAddress, gpioData, 4);
+#ifdef LMX_DEBUG
+     DEBUG_LMX("[SC18IS602B GPIO SET for LMX] Pins: " << QString().sprintf("0x%02X", gpioData)
+#endif
+     return result;
+}
+
 
 
 /*************************************************************************************/
@@ -1329,7 +1670,7 @@ void LMX2594::setSafeDefaults()
 
 /*!
  \brief Write value to LMX register
- \param regAddress  Register number to write to (0 to MAX_REGISTER_ADDRESS)
+ \param regAddress  Register number to write to
  \param regValue    Value to write
 
  \return globals::OK               Success... Register data written
@@ -1340,7 +1681,7 @@ void LMX2594::setSafeDefaults()
 int LMX2594::writeRegister(const uint8_t regAddress, const uint16_t regValue)
 {
     if (!spiAdaptorIsOpen) return globals::NOT_INITIALISED;
-    //Q_ASSERT(regAddress <= MAX_REGISTER_ADDRESS);
+    Q_ASSERT(regAddress < REGISTER_COUNT);
     if (regAddress >= REGISTER_COUNT) return globals::OVERFLOW;
 
     // Register Write: Write to the SC18IS602B I2C-SPI bridge, using a register address
@@ -1403,7 +1744,7 @@ uint16_t LMX2594::setRegisterBits(const uint16_t registerInputValue,
 
  See setRegisterBits for more info.
 
- \param address  Register to set (0 to MAX_REGISTER_ADDRESS)
+ \param address  Register to set (0 to n)
  \param nBits  Number of bits to set within the register
  \param shift  Number of bits to shift the value left
  \param value  Value to set
@@ -1452,7 +1793,7 @@ int LMX2594::writeRegisterBits(const uint8_t  address,
 int LMX2594::readRegister(const uint8_t regAddress, uint16_t *regValue)
 {
     if (!spiAdaptorIsOpen) return globals::NOT_INITIALISED;
-    //Q_ASSERT(regAddress <= MAX_REGISTER_ADDRESS);
+    Q_ASSERT(regAddress < REGISTER_COUNT);
     if (regAddress >= REGISTER_COUNT) return globals::OVERFLOW;
 
 #ifdef LD_LED_ENABLE
@@ -1498,6 +1839,14 @@ int LMX2594::readRegister(const uint8_t regAddress, uint16_t *regValue)
 #endif
 
 }
+
+
+
+
+
+
+
+
 
 
 

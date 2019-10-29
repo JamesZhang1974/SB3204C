@@ -25,6 +25,7 @@
 
 #include "widgets/BertUIButton.h"
 #include "widgets/BertUIBGWidget.h"
+#include "widgets/BertUICDRChannel.h"
 #include "widgets/BertUICheckBox.h"
 #include "widgets/BertUIEDChannel.h"
 #include "widgets/BertUIGroup.h"
@@ -41,10 +42,15 @@
 #include "widgets/BertUITextInput.h"
 #include "widgets/BertUIPlotEye.h"
 
+#include "globals.h"
+#include "BertBranding.h"
+#include "BertModel.h"
+
 #include "BertChannel.h"
 #include "BertWorker.h"
 #include "BertFile.h"
 #include "LMXFrequencyProfile.h"
+
 
 
 
@@ -68,14 +74,17 @@ signals:
     // Signals for LMX Clock IC:
     LMX2594_SLOTS
 
-    // Signals for the PCA9557 IC:
+    // Signals for the PCA9557A IC:
     PCA9557_SLOTS
+
 
     // Signals for the M24M02 EEPROM IC:
     M24M02_SLOTS
 
     // Signals for the SI5340 Reference Clock IC:
     SI5340_SLOTS
+
+
 
 private slots:
 
@@ -91,8 +100,9 @@ private slots:
     // Signals from LMX clock IC:
     LMX2594_SIGNALS
 
-    // Signals from PCA9557 IC:
+    // Signals from PCA9557A IC:
     PCA9557_SIGNALS
+
 
     // Signals from M24M02 EEPROM IC:
     M24M02_SIGNALS
@@ -143,6 +153,7 @@ private slots:
     void on_buttonWriteEEPROM_clicked();
     void on_listEEPROMModel_currentIndexChanged(int index);
     void on_buttonWriteProfilesToEEPROM_clicked();
+//    void on_buttonWriteFirmwareToEEPROM_clicked();
     void on_buttonVerifyLMXProfiles_clicked();
 
     // --- Frequency Synth Page: ---------
@@ -152,11 +163,15 @@ private slots:
 
     void listRefClockProfiles_currentIndexChanged(int index)       UI_EVENT(5000, 1, RefClockSelectProfile(index, true))
 
+    void on_checkAnyRateOn_clicked(bool checked)                   UI_EVENT(2000, 1, SetAnyRateProfile(checked))
+    void on_buttonSetAnyRate_clicked();
+    void on_buttonSetRFPower_clicked();
 
     // --- PG Page: ---------------
     void boolPGLaneOn_clicked                   (int lane, bool checked)  UI_EVENT(2000, 1, SetLaneOn(lane, checked, false))
     void boolPGLaneInverted_clicked             (int lane, bool checked)  UI_EVENT(2000, 1, SetLaneInverted(lane, checked))
     void listPGAmplitude_currentIndexChanged    (int lane, int index)     UI_EVENT(2000, 1, SetOutputSwing(lane, index))
+    void listPGAmplitudeB_currentIndexChanged    (int lane, int index)     UI_EVENT(2000, 1, SetOutputSwingB(lane, index))
     void listPGPattern_currentIndexChanged      (int lane, int index)     UI_EVENT(5000, 1, ConfigPG(lane, index, bitRate))
     void listPGDeemphLevel_currentIndexChanged  (int lane, int index)     IF_UI_ENABLED(pgDemphChanged(lane); Q_UNUSED(index))
     void listPGDeemphCursor_currentIndexChanged (int lane, int index)     IF_UI_ENABLED(pgDemphChanged(lane); Q_UNUSED(index))
@@ -185,9 +200,39 @@ private slots:
     void on_buttonBathtubStop_clicked();
     void on_checkBPEnableAll_clicked(bool checked);
 
+    // --- CDR Mode Page: --------------
+    void listCDRChannelSelect_currentIndexChanged(int core, int index) IF_UI_ENABLED(cdrModeSettingsChanged(core); Q_UNUSED(index))
+    void listCDRDivideRatio_currentIndexChanged(int core, int index)   IF_UI_ENABLED(cdrModeSettingsChanged(core); Q_UNUSED(index))
+    // JCB OLD void checkCDRModeEnable_clicked(int core, bool checked)            IF_UI_ENABLED(cdrModeSettingsChanged(core); Q_UNUSED(checked))
+    void on_checkCDRModeEnable_clicked(bool checked)                      IF_UI_ENABLED(cdrModeEnableChanged(checked))
+    void listLoopBandwidthSelect_currentIndexChanged(int core,int index)  IF_UI_ENABLED(cdrLBWChanged(core); Q_UNUSED(index))
+    void listDataRateSelect_currentIndexChanged(int core, int index)      IF_UI_ENABLED(cdrLBWChanged(core); Q_UNUSED(index))
+    void listRateDividerSelect_currentIndexChanged(int core, int index)   IF_UI_ENABLED(cdrLBWChanged(core); Q_UNUSED(index))
+    void listTargetLBWSelect_currentIndexChanged(int core, int index)     IF_UI_ENABLED(cdrLBWChanged(core); Q_UNUSED(index))
+ private:
+    // Tab Identifiers: Stored with each tab widget as a dynamic property
+    // called "TabID" so that we can tell later which tab we're looking at.
+    enum TabID
+    {
+        TAB_CONNECT,
+        TAB_CLOCKSYNTH,
+        TAB_PG,
+        TAB_ED,
+        TAB_EYESCAN,
+        TAB_BATHTUB,
+        TAB_CDR,
+        TAB_ABOUT
+    };
 
-
-private:
+    // Type identifiers for tabs:
+    // What type of instrument function does this tab apply to?
+    enum TabType
+    {
+        SMARTEST_ALL,  // All types of instrument
+        SMARTEST_PG,   // Pattern generator functions
+        SMARTEST_ED,   // Error detector functions
+        SMARTEST_CDR   // Error detector functions
+    };
 
     QWidget *makeUI(QWidget *parent);
     void makeUIChannel(int channel, QWidget *parent);
@@ -215,9 +260,11 @@ private:
 
     void frequencyProfileChanged(int index);
 
+    void SetAnyRateProfile(bool checked);
+
     void pgDemphChanged(int level);
 
-    void showEDControls(bool edControlsVisible);
+    void showControls(TabType tabType, bool isVisible);
 
     void edControlInit();
     void edStartStopReflect();
@@ -232,28 +279,13 @@ private:
 
     void bathtubUIUpdate(bool isRunning);
 
+    void cdrModeLosLolUpdate(int lane, bool los, bool lol);
+    void cdrModeEnableChanged(bool isEnabled);
+    void cdrModeSettingsChanged(int core);
+    void cdrLBWChanged(int core);
+    static int cdrModeChanSelIndexToLane(int index);
+
     void closeEvent(QCloseEvent *event);
-
-    // Tab Identifiers: Stored with each tab widget as a dynamic property
-    // called "TabID" so that we can tell later which tab we're looking at.
-    enum TabID
-    {
-        TAB_CONNECT,
-        TAB_CLOCKSYNTH,
-        TAB_PG,
-        TAB_ED,
-        TAB_EYESCAN,
-        TAB_BATHTUB,
-        TAB_ABOUT
-    };
-
-    // Instrument type identifiers for tabs:
-    // What type of instrument should show this tab?
-    enum InstrumentType
-    {
-        SMARTEST_ALL,
-        SMARTEST_SB_ONLY
-    };
 
     static const QStringList EYESCAN_REPEATS_LIST;     // List of options for "Repeats" list (Eyescan and Bathtub plot)
     static const QList<int>  EYESCAN_REPEATS_LOOKUP;   // Lookup table of actual values associated with "repeats" list
@@ -319,11 +351,13 @@ private:
     bool eventsEnabled = false;
 
     int  edUpdateCounter = 0;
+    int  cdrUpdateCounter = 0;
 
     bool edPending = false;
     bool edRunning = false;
     bool eyeScanRunning = false;
     bool bathtubRunning = false;
+    bool cdrModeRunning = false;
 
     int currentTabIndex = 0;
 
@@ -344,6 +378,7 @@ private:
     QWidget             *tabErrorDetector;
     QWidget             *tabAnalysisEyeScan;
     QWidget             *tabAnalysisBathtub;
+    QWidget             *tabCDRControls;
     QWidget             *tabAbout;
 
     BertUIButton        *buttonPortListRefresh;
@@ -359,12 +394,29 @@ private:
     BertUIGroup         *groupClock;
     QVBoxLayout         *layoutClockSynth;
     BertUIList          *listLMXFreq;
+    BertUIList          *list10Gbps;
+    BertUIList          *list1Gbps;
+    BertUIList          *list100Mbps;
+    BertUIList          *list10Mbps;
+    BertUIList          *list1Mbps;
+    BertUIList          *list100Kbps;
+    BertUIList          *list10Kbps;
+    BertUIList          *list1Kbps;
+    BertUIButton        *buttonSetAnyRate;
     BertUILamp          *lampLMXLockMaster;
     BertUILamp          *lampLMXLockSlave;
     BertUIList          *listLMXTrigOutDivRatio;
     BertUIList          *listLMXTrigOutPower;
+    BertUICheckBox      *checkAnyRateOn;
 
-    BertUIGroup         *groupRefClock;
+    BertUIButton        *buttonSetRFPower;
+    BertUIList          *listOut_ISET;
+    BertUIList          *listOutA_PWR_1;
+    BertUIList          *listOutA_PWR_0;
+    BertUIList          *listOutB_PWR_1;
+    BertUIList          *listOutB_PWR_0;
+
+    BertUIGroup         *groupRefClock = nullptr;
     BertUIList          *listRefClockProfiles;
     BertUITextInfo      *valueRefClockFreqIn;
     BertUITextInfo      *valueRefClockFreqOut;
@@ -407,6 +459,10 @@ private:
     QGridLayout         *layoutBPCheckboxes;
     QGridLayout         *layoutBPChannels;
 
+    QVBoxLayout         *layoutCDR;
+    BertUIPane          *paneCDRCheckBoxes;
+    BertUICheckBox      *checkCDRModeEnable;
+
     QWidget             *hiddenTabs;
 
     // UI Widgets for setting EEPROM data: Factory Use Only!
@@ -424,8 +480,12 @@ private:
 
     BertUIList          *listTCSLMXProfiles = nullptr;
     BertUIList          *listEEPROMLMXProfiles = nullptr;
+    BertUIList          *listFirmwareVersion = nullptr;
+//  BertUIList          *listEEPROMFirmware = nullptr;
     BertUIButton        *buttonWriteProfilesToEEPROM = nullptr;
     BertUIButton        *buttonVerifyLMXProfiles = nullptr;
+//    BertUIButton        *buttonWriteFirmwareToEEPROM = nullptr;
+//  BertUIButton        *buttonVerifyFirmware = nullptr;
 
 };
 

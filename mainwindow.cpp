@@ -12,6 +12,8 @@ const QStringList BertWindow::EYESCAN_REPEATS_LIST =
    { "1", "5", "10", "50", "100", "500", "1000", "∞" };
 
 
+// Convert index in Channel Select list (on CDR Mode tab) to device lane
+#define CDR_CH_SELECT_TO_LANE(i) (i * 2) + 1
 
 BertWindow::BertWindow(QWidget *parent) :
     QMainWindow(parent),
@@ -28,9 +30,9 @@ BertWindow::BertWindow(QWidget *parent) :
 
     // Window title:
 #ifdef BERT_DEMO_CHANNELS
-    QString windowTitle = QString("%1 DEMO").arg(globals::APP_TITLE);
+    QString windowTitle = QString("%1 DEMO").arg(BertBranding::APP_TITLE);
 #else
-    QString windowTitle = globals::APP_TITLE;
+    QString windowTitle = BertBranding::APP_TITLE;
 #endif
     setWindowTitle(windowTitle);
 
@@ -180,6 +182,11 @@ void BertWindow::GT1724Added(GT1724 *gt1724, int laneOffset)
     int channel = BertChannel::laneToChannel(laneOffset);
     makeUIChannel(channel,     this);
     makeUIChannel(channel + 1, this);
+    if (BertModel::UseFourChanPGMode())
+    {
+        makeUIChannel(channel + 2, this);
+        makeUIChannel(channel + 3, this);
+    }
 
     // Connect up slots and signals for this GT1724 chip:
     GT1724_CONNECT_SIGNALS(this, gt1724)
@@ -194,14 +201,16 @@ void BertWindow::LMX2594Added(LMX2594 *lmx2594, int deviceID)
     LMX_CONNECT_SIGNALS(this, lmx2594)
 }
 
-void BertWindow::PCA9557Added(PCA9557 *pca9557, int deviceID)
+
+void BertWindow::PCA9557_Added(PCA9557 *pca9557, int deviceID)
 {
 #ifdef BERT_SIGNALS_DEBUG
     qDebug() << "Received Sig PCA9557Added with ID " << deviceID << " on thread " << QThread::currentThreadId();
 #endif
-    // Connect up slots and signals for a PCA9557 IO chip:
+    //Connect up slots and signals for a PCA9557 IO chip:
     PCA9557_CONNECT_SIGNALS(this, pca9557)
 }
+
 
 void BertWindow::M24M02Added(M24M02 *m24m02, int deviceID)
 {
@@ -211,6 +220,7 @@ void BertWindow::M24M02Added(M24M02 *m24m02, int deviceID)
     // Connect up slots and signals for a M24M02Added EEPROM chip:
     M24M02_CONNECT_SIGNALS(this, m24m02)
 }
+
 
 
 void BertWindow::SI5340Added(SI5340 *si5340, int deviceID)
@@ -224,6 +234,7 @@ void BertWindow::SI5340Added(SI5340 *si5340, int deviceID)
     // Add UI contols for ref clock:
     if (deviceID == 0) makeUIRefClock();  // Only add UI once (for 1st ref clock we find!).
 }
+
 
 void BertWindow::OptionsSent()
 {
@@ -239,6 +250,20 @@ void BertWindow::OptionsSent()
     // FACTORY MODE ONLY: Request reading of clock defs from TCS files
     if (factoryOptionsEnabled)
     {
+        /*
+        QString FilesFirmwarePath = globals::getAppPath() + QString("\\firmwares\\");
+        QStringList FirmwareVersion;
+        int FWcheck = BertFile::readDirectory(FilesFirmwarePath, FirmwareVersion);
+        if (!FWcheck)
+        {
+            qDebug() <<"Firmware Name is "<<FirmwareVersion;
+            const QStringList firmwaveList = FirmwareVersion;
+
+        }
+        else {
+            qDebug() << "$$$$$$$$$$$$$$NOT Read the firmware!$$$$$$$$$$$$$$$"<<FWcheck;
+        }
+        */
         QString clockRegFilePath = globals::getAppPath() + QString("\\clockdefs\\");
         emit ReadTcsFrequencyProfiles(clockRegFilePath);
     }
@@ -293,6 +318,9 @@ void BertWindow::UpdateBoolean(QString name, int lane, bool value)
     eventsEnabled = true;
 }
 
+
+
+
 void BertWindow::UpdateString(QString name, int lane, QString value)
 {
 #ifdef BERT_SIGNALS_DEBUG
@@ -321,12 +349,15 @@ void BertWindow::ShowMessage(QString message, bool append)
 
 void BertWindow::EDLosLol(int lane, bool los, bool lol)
 {
+//     emit EDStopLed();
 #ifdef BERT_SIGNALS_DEBUG
-    //qDebug() << "Received Sig EDLosLol: Lane = " << lane << "; LOS = " << los << "; LOL = " << lol;
+    qDebug() << "Received Sig EDLosLol: Lane = " << lane << "; LOS = " << los << "; LOL = " << lol;
 #endif
     int channel = BertChannel::laneToChannel(lane);
     getChannel(channel)->getED()->setEDSignalLock(!los);
     getChannel(channel)->getED()->setEDCDRLock(!los && !lol);
+    cdrModeLosLolUpdate(lane, los, lol);
+
 }
 
 
@@ -402,9 +433,10 @@ void BertWindow::LMXInfo(int deviceID, int indexProfile, int indexTrigOutputPowe
     Q_UNUSED(outputsOn)
     Q_UNUSED(indexFOutOutputPower)
     Q_UNUSED(indexTriggerDivide)
+    Q_UNUSED(indexTrigOutputPower)
     eventsEnabled = false;
-    listLMXFreq->setCurrentIndex(indexProfile);
-    listLMXTrigOutPower->setCurrentIndex(indexTrigOutputPower);
+    if(indexProfile != 99) listLMXFreq->setCurrentIndex(indexProfile);
+//    listLMXTrigOutPower->setCurrentIndex(indexTrigOutputPower);
     // Update the system-wide bit rate:
     bitRate = static_cast<double>(frequency) * 2.0 * 1e6; // Convert to GBits and double (clock is 1/2 rate)
     valueBitRate_PG->setText(      QString("%1").arg( (bitRate/1e9), 0, 'f', 5)  );  // Gbps
@@ -468,6 +500,18 @@ void BertWindow::LMXLockDetect(int deviceID, bool isLocked)
 
 
 // ========== SLOTS - M24M02 EEPROM IC  ============================================
+// Received EEPROM data
+// NOTE: This message includes the "model" code for the device,
+// which is used to set up the GT1724 cores (PG vs ED channels)
+// Therefore, it's important that this signal be received before the
+// GT1724 cores are configured.
+// We hope that the Bert Worker class manages that; the only reason
+// that we select the Bert Model here (BertModel::SelectModel) is because
+// the back end doesn't really want to know what model it is supposed to be;
+// we want to delegate that choice to the UI.
+// POSSIBLE IMPROVEMENT: Move model selection to the back end, and just
+// inform the UI of what channel controls it ought to display?
+
 void BertWindow::EEPROMStringData(int deviceID,
                                   QString model,
                                   QString serial,
@@ -507,9 +551,33 @@ void BertWindow::EEPROMStringData(int deviceID,
     if (inputWarrantyEnd) inputWarrantyEnd->setText(warrantyEnd);
     if (inputSynthConfigVersion) inputSynthConfigVersion->setText(synthConfigVersion);
 
-    // Decide whether to display the ED controls: These will only be shown if the model is "SB-XXXXXX"
-    if (model.length() > 2 && model.left(2) == QString("SB"))   showEDControls(true);
-    else                                                        showEDControls(false);
+    /* // DEPRECATED
+    // Decide whether to display the ED controls:
+    // These will only be shown if the model is "SB-XXXXXX" and BertModel::UseFourChanPGMode() is FALSE
+    bool showED = false;
+    if (!BertModel::UseFourChanPGMode()
+      && model.length() > 2
+      && model.left(2) == QString("SB")) showED = true;
+
+    if (showED) showEDControls(true);
+    else        showEDControls(false);
+
+    */
+
+    // Select Model features:
+    if (BertModel::SelectModel(model))
+    {
+        showControls(SMARTEST_PG, true);  // All models have PG controls.
+
+        if (BertModel::UseFourChanPGMode()) showControls(SMARTEST_ED, false);
+        else                                showControls(SMARTEST_ED, true);
+    }
+    else
+    {
+        // Couldn't determine model... hide all PG and ED controls.
+        showControls(SMARTEST_PG, false);
+        showControls(SMARTEST_ED, false);
+    }
 }
 
 
@@ -666,6 +734,11 @@ void BertWindow::uiChangeOnConnect(bool connectedStatus)
     if (buttonWriteProfilesToEEPROM) buttonWriteProfilesToEEPROM->setEnabled(connectedStatus);
     if (buttonVerifyLMXProfiles) buttonVerifyLMXProfiles->setEnabled(connectedStatus);
 
+    if (listFirmwareVersion) listFirmwareVersion->setEnabled(connectedStatus);
+ // if (listEEPROMFirmware) listEEPROMFirmware->setEnabled(connectedStatus);
+ // if (buttonWriteFirmwareToEEPROM) buttonWriteFirmwareToEEPROM->setEnabled(connectedStatus);
+ // if (buttonVerifyFirmware) buttonVerifyFirmware->setEnabled(connectedStatus);
+
     groupTemps->setEnabled(connectedStatus);
     groupClock->setEnabled(connectedStatus);
 
@@ -674,6 +747,13 @@ void BertWindow::uiChangeOnConnect(bool connectedStatus)
     tabAnalysisEyeScan->setEnabled(connectedStatus);
     tabAnalysisBathtub->setEnabled(connectedStatus);
     tabAbout->setEnabled(true);
+
+    if (!connectedStatus)
+    {
+        showControls(SMARTEST_PG, false);
+        showControls(SMARTEST_ED, false);
+    }
+
 }
 
 
@@ -720,12 +800,13 @@ void BertWindow::on_tabWidget_tabBarClicked(int index)
 void BertWindow::on_tabWidget_currentChanged(int index)
 {
     Q_UNUSED(index)
-    // Can't change tabs while connecting, or ED, eye scan or bathtub analysis is operating:
-    if ( (connectInProgress) ||
-         (edPending)         ||
-         (edRunning)         ||
-         (eyeScanRunning)    ||
-         (bathtubRunning) )
+    // Can't change tabs while connecting, or ED, eye scan or bathtub analysis, or CDR mode, is operating:
+    if ( connectInProgress ||
+         edPending         ||
+         edRunning         ||
+         eyeScanRunning    ||
+         bathtubRunning    ||
+         cdrModeRunning )
     {
         tabWidget->setCurrentIndex(currentTabIndex);
         return;
@@ -793,6 +874,8 @@ void BertWindow::on_buttonConnect_clicked()
         emit CommsDisconnect();
         if (listTCSLMXProfiles) listTCSLMXProfiles->clear();
         if (listEEPROMLMXProfiles) listEEPROMLMXProfiles->clear();
+        if (listFirmwareVersion) listFirmwareVersion->clear();
+//      if (listEEPROMFirmware) listEEPROMFirmware->clear();
     }
 }
 
@@ -894,12 +977,11 @@ void BertWindow::on_buttonWriteEEPROM_clicked()
 */
 void BertWindow::on_buttonWriteProfilesToEEPROM_clicked()
 {
-    lockUI(10000, 3);
+    lockUI(30000, 3);
     qDebug() << "UNLOCK EEPROM...";
     emit SetEEPROMWriteEnable(true);
     qDebug() << "UPDATE EEPROM...";
     emit LMXEEPROMWriteFrequencyProfiles();
-    lockUI(25000);
     qDebug() << "RELOCK EEPROM...";
     emit SetEEPROMWriteEnable(false);
 
@@ -911,6 +993,30 @@ void BertWindow::on_buttonWriteProfilesToEEPROM_clicked()
 }
 
 /*!
+ \brief Write Frequency Firmware to EEPROM
+ EEPROM Setup - Factory Only
+*/
+/*
+void BertWindow::on_buttonWriteFirmwareToEEPROM_clicked()
+{
+    lockUI(10000, 3);
+    qDebug() << "UNLOCK EEPROM...";
+//    emit SetEEPROMWriteEnable(true);
+    qDebug() << "UPDATE EEPROM...";
+      emit WriteFirmware(0);
+    qDebug() << "RELOCK EEPROM...";
+//    emit SetEEPROMWriteEnable(false);
+
+//  listFirmwareVersion->clear();
+//  listEEPROMFirmware->clear();
+//  listEEPROMFirmware->addItems(QStringList({"[Disconnect / Reconnect Required]"}));
+    buttonWriteFirmwareToEEPROM->setEnabled(false);
+//  buttonVerifyFirmware->setEnabled(false);  // Must disconnect / reconnect to verify.
+}
+
+*/
+
+/*!
  \brief Verify Frequency Profiles
  Compares profiles read from files to profiles read from EEPROM
 */
@@ -919,8 +1025,16 @@ void BertWindow::on_buttonVerifyLMXProfiles_clicked()
     emit LMXVerifyFrequencyProfiles();
 }
 
-
-
+/*!
+ \brief Verify Firmware
+ Compares Firmware read from files to Firmware read from EEPROM
+*/
+/*
+void BertWindow::on_buttonVerifyFirmware_clicked()
+{
+    emit EEPROMVerifyFirmware();
+}
+*/
 // *******************************************************************************
 // ***** Clock Synth Page ********************************************************
 // *******************************************************************************
@@ -936,8 +1050,65 @@ void BertWindow::frequencyProfileChanged(int index)
     emit SelectProfile(index);
 }
 
+void BertWindow::SetAnyRateProfile(bool checked)
+{
+    buttonSetAnyRate->setEnabled(checked);
+    list10Gbps->setEnabled(checked);
+    list1Gbps->setEnabled(checked);
+    list100Mbps->setEnabled(checked);
+    list10Mbps->setEnabled(checked);
+    list1Mbps->setEnabled(checked);
+    list100Kbps->setEnabled(checked);
+    list10Kbps->setEnabled(checked);
+    list1Kbps->setEnabled(checked);
+    listLMXFreq->setEnabled(!checked);
+    if(checked)
+    {
+        emit ShowMessage("Input Any data rate between 480Mbps and 30Gbps");
+    }
+    else
+    {
+        frequencyProfileChanged(listLMXFreq->currentIndex());
+    }
+}
 
+void BertWindow::on_buttonSetAnyRate_clicked()
+{
 
+   int D7   = (list10Gbps ->currentIndex());
+   int D6   = (list1Gbps  ->currentIndex());
+   int D5   = (list100Mbps->currentIndex());
+   int D4   = (list10Mbps ->currentIndex());
+   int D3   = (list1Mbps  ->currentIndex());
+   int D2   = (list100Kbps->currentIndex());
+   int D1   = (list10Kbps ->currentIndex());
+   int D0   = (list1Kbps  ->currentIndex());
+
+   lampLMXLockMaster->setState(BertUILamp::ERR);
+
+   if (maxChannel > 4) lampLMXLockSlave->setState(BertUILamp::ERR);
+   else                lampLMXLockSlave->setState(BertUILamp::OFF);
+
+   lockUI(5000, 1);
+
+   emit AnyRateProfile(D7, D6, D5, D4, D3, D2, D1, D0);
+
+}
+
+void BertWindow::on_buttonSetRFPower_clicked()
+{
+
+   int ISET   = (listOut_ISET    ->currentIndex());
+   int A1     = (listOutA_PWR_1  ->currentIndex());
+   int A0     = (listOutA_PWR_0  ->currentIndex());
+   int B1     = (listOutB_PWR_1  ->currentIndex());
+   int B0     = (listOutB_PWR_0  ->currentIndex());
+
+   lockUI(2000, 1);
+
+   emit ConfigureOutputs_Debug(ISET, A1, A0, B1, B0);
+
+}
 
 // *******************************************************************************
 // ***** Pattern Generator Page **************************************************
@@ -953,6 +1124,8 @@ void BertWindow::pgDemphChanged(int lane)
     if (eventsEnabled)
     {
         int channel = BertChannel::laneToChannel(lane);
+qDebug() << "BertWindow::pgDemphChanged; lane: " << lane << "; channel: " << channel;
+
         int levelIndex = getChannel(channel)->getPG()->getDeemphLevelIndex();
         int cursorIndex = getChannel(channel)->getPG()->getDeemphCursorIndex();
         lockUI(2000, 1);
@@ -969,39 +1142,32 @@ void BertWindow::pgDemphChanged(int lane)
 
 
 /*!
- \brief Show / Hide ED Controls
+ \brief Show / Hide ED or PG Controls
  \param edControlsVisible  true = Show the ED related pages; false = Hide
 */
-void BertWindow::showEDControls(bool edControlsVisible)
+void BertWindow::showControls(TabType tabType, bool visible)
 {
-    if (edControlsVisible)
+    // Show / Hide Tabs:
+    qDebug() << (visible ? "Show" : "Hide") << " tabs for "
+             << ((tabType == SMARTEST_PG) ? "PG" : "ED");
+
+    foreach (QWidget *thisTab, tabs)
     {
-        // Showing the ED controls:
-        qDebug() << "ED-equipped model: Show ED pages.";
-        foreach (QWidget *thisTab, tabs)
+        TabType thisTabType = static_cast<TabType>(thisTab->property("TabType").toInt());
+        if (thisTabType == tabType)
         {
-            InstrumentType insType = static_cast<InstrumentType>(thisTab->property("InstrumentType").toInt());
-            if (insType == SMARTEST_SB_ONLY && thisTab->parent() == dynamic_cast<QObject *>(hiddenTabs))
+            if (visible && thisTab->parent() == dynamic_cast<QObject *>(hiddenTabs))
             {
-                // This tab is currently hidden, and should be displayed if ED controls are enabled!
+                // This tab is currently hidden, and should be displayed:
                 QString title = thisTab->property("TabTitle").toString();   // Get the title string for this tab
                 int newIndex = tabWidget->count()-1;                        // New tab index: Insert before the "About" tab
                 newIndex = tabWidget->insertTab(newIndex, thisTab, title);  // Insert the tab
             }
-        }
-    }
-    else
-    {
-        // Hiding the ED controls:
-        qDebug() << "PG-only model: Hide ED pages.";
-        foreach (QWidget *thisTab, tabs)
-        {
-            InstrumentType insType = static_cast<InstrumentType>(thisTab->property("InstrumentType").toInt());
-            if (insType == SMARTEST_SB_ONLY && thisTab->parent() != dynamic_cast<QObject *>(hiddenTabs))
+            else if (!visible && thisTab->parent() != dynamic_cast<QObject *>(hiddenTabs))
             {
                 // This tab is currently visible, and should be hidden:
                 tabWidget->removeTab(tabWidget->indexOf(thisTab));  // Remove the tab
-                thisTab->setParent(hiddenTabs);                     // Move it to the hidden widge on About page (hiddenTabs).
+                thisTab->setParent(hiddenTabs);                     // Move it to the hidden widget on About page (hiddenTabs).
                                                                     // This means that widget searches will still locate it (e.g. List Update).
             }
         }
@@ -1129,7 +1295,6 @@ void BertWindow::on_buttonEDStop_clicked()
 */
 void BertWindow::uiUpdateTimerTick()
 {
-    // qDebug() << "UI Update Timer Tick...";
     // Check UI unlock timer; Unlock UI if it has expired.
     if (uiUnlockInMs > 0)
     {
@@ -1142,6 +1307,8 @@ void BertWindow::uiUpdateTimerTick()
 
     // Find out which tab is currently displayed:
     TabID tabID = static_cast<TabID>(tabWidget->currentWidget()->property("TabID").toInt());
+
+    // qDebug() << "UI Update Timer Tick; Tab = " << tabID;
 
     // Clear the status text every 5 seconds:
     tickCountStatusTextReset++;
@@ -1184,6 +1351,82 @@ void BertWindow::uiUpdateTimerTick()
         }
     }
 
+    // ===========================================================================================================================
+    // If on CDR Mode Page: Update LOL indicator every second:
+    if (commsConnected
+     && tabID == TAB_CDR
+     && checkCDRModeEnable->isChecked() )
+    {
+        // qDebug() << "CDR Update timer " << cdrUpdateCounter;
+
+        // Update the CDR Mode Lock Lamps for each channel:
+        // If not locked, make the lamp flash.
+
+        foreach (BertChannel *bertChannel, bertChannels)
+        {
+            if (!bertChannel->hasCDRModeChannel()) continue;  // Not a CDR mode channel
+            BertUICDRChannel *cdr = bertChannel->getCDRMode();
+
+            // If Data locked, show data "Lock" lamp:
+            if (cdr->getDataLocked())
+            {
+                cdr->setDataLockLampState(BertUILamp::OK);
+            }
+            else
+            {
+                // Flash mode: If CDR mode is enabled but data not locked, flash the "No Lock" lamp:
+                if (cdrUpdateCounter == 0)
+                {
+                    cdr->setDataLockLampState(BertUILamp::OFF);
+                }
+
+                if (cdrUpdateCounter == 2)
+                {
+                    cdr->setDataLockLampState(BertUILamp::ERR);
+                }
+            }
+
+            // If CDR locked, show CDR "Lock" lamp:
+            if (cdr->getCDRLocked())
+            {
+                cdr->setCDRLockLampState(BertUILamp::OK);
+            }
+            else
+            {
+                // Flash mode: If CDR not locked, flash the "No Lock" lamp:
+                if (cdrUpdateCounter == 0)
+                {
+                    cdr->setCDRLockLampState(BertUILamp::OFF);
+                }
+
+                if (cdrUpdateCounter == 2)
+                {
+                    cdr->setCDRLockLampState(BertUILamp::ERR);
+                }
+            }
+        }
+
+        if (cdrUpdateCounter == 3)
+        {
+            // ----- Read and Updade the LOS / LOL State: -------
+            // LOS / LOL lights are only updated if CDR mode enabled.
+            // We update the LOS / LOL for any GT1724 core which has a CDR Mode UI section.
+            foreach (BertChannel *bertChannel, bertChannels)
+            {
+                if (bertChannel->hasCDRModeChannel())
+                {
+                    // qDebug() << "-Emit Get LOS / LOL for meta lane " << bertChannel->getMetaLane();
+                    emit GetLosLol(bertChannel->getMetaLane());
+                }
+            }
+        }
+    }
+    cdrUpdateCounter++;
+    if (cdrUpdateCounter >= 4) cdrUpdateCounter = 0;
+
+
+
+    // ===========================================================================================================================
     // Code below here updates the ED page, so skip if we're not on that page.
     if (tabID != TAB_ED) return;
 
@@ -1750,7 +1993,6 @@ void BertWindow::on_buttonEyeScanStop_clicked()
 
 
 
-
 /*******************************************************************
  ******  Bathtub Plot  *********************************************
  *******************************************************************/
@@ -1824,6 +2066,217 @@ void BertWindow::on_buttonBathtubStop_clicked()
 
 
 
+// ***********************************************************
+//  CDR Mode Page
+// ***********************************************************
+
+int BertWindow::cdrModeChanSelIndexToLane(int index)
+{
+    return (index * 2) + 1;
+}
+
+/*!
+ \brief Update LOS / LOL lamps on CDR Mode Tab
+ \param lane  Source lane (should be 1 or 3)
+ \param los   True = Loss Of Signal
+ \param lol   True = Loss of Lock (CDR)
+*/
+void BertWindow::cdrModeLosLolUpdate(int lane, bool los, bool lol)
+{
+    // We get LOS / LOL data for odd numbered lanes, where
+    //  lanes 1, 3 are Core 0
+    //  lanes 5, 7 are Core 1, etc.
+    // However, each core has one "CDR Mode" channel for which we need
+    // to update the Lock lamp, and which lane it maps to depends on
+    // which input lane is selected in the controls for the channel.
+    // Also, when considering whether we have any CDR mode controls
+    // for the lane given in the LOS LOL data, we need to melt the
+    // lane number down to the first lane for each core,
+    //  i.e. lanes 1, 3 -> 1; lanes 5, 7 -> 5, etc...
+    // Because there is only one CDR control for each core.
+    int baseLane = (lane - (lane % 4)) + 1;
+
+    int channel = BertChannel::laneToChannel(baseLane);
+    BertChannel *bertChannel = getChannel(channel);
+
+    if (!bertChannel->hasCDRModeChannel()) return;  // Not a CDR mode channel
+
+    BertUICDRChannel *cdr = bertChannel->getCDRMode();
+
+    // We need to filter LOS / LOL updated from the Gennum core according to whether
+    // they are for the currently selected input lane in the CDR mode controls.
+    // Get the index of the selected input lane for this CDR mode channel,
+    // and use it to calculate the equivalent lane as returned by the LOS LOL update.
+    // We mod lane by 4 because LOS / LOL updates are device-wide lanes, i.e. 1,3,5,7, ...
+    // but our CDR mode channel controls only care about lane relative to their core
+    // (i.e. 1 or 3).
+    int virtualSelectedLane = cdrModeChanSelIndexToLane(cdr->getCDRChannelSelectIndex());
+
+    /* DEBUG: */
+    qDebug() << "cdrModeLosLolUpdate: "
+             << "lane = " << lane
+             << "; los = " << los
+             << "; lol = " << lol
+             << "; baseLane: " << baseLane
+             << "; virtualSelectedLane: " << virtualSelectedLane;
+    /* */
+
+    if (cdrModeRunning && (lane % 4) == virtualSelectedLane)
+    {
+        // Nb: We just set flags for Data and CDR locked.
+        // UI updates (if needed) are done in the uiUpdateTimerTick method
+        cdr->setDataLocked(!los);
+        cdr->setCDRLocked(!los && !lol);
+        // qDebug() << "-- Signal lock for lane is now " << cdr->getCDRLocked();
+    }
+}
+
+/*!
+ \brief CDR Mode Enable / Disable
+  Global; i.e. not specific to one channel or core.
+  CDR Mode is either ON or OFF for all cores and lanes because
+  engaging CDR mode requires stopping the clock generator.
+*/
+void BertWindow::cdrModeEnableChanged(bool isEnabled)
+{
+    qDebug() << "CDR Mode Enable Changed; Now: " << isEnabled;
+    if (isEnabled)
+    {
+        cdrModeRunning = true;
+        qDebug() << "--Disbale LMX Clock...";
+        emit SetLMXEnable(false);
+        cdrModeSettingsChanged(-1);   // Set up all available CDR mode channels
+        // Enable all CDR mode controls
+        foreach (BertChannel *bertChannel, bertChannels)
+        {
+            if (bertChannel->hasCDRModeChannel()) bertChannel->getCDRMode()->setVisualState(true);
+        }
+        qDebug() << "--OK!";
+    }
+    else
+    {
+        // Disable all CDR mode controls
+        foreach (BertChannel *bertChannel, bertChannels)
+        {
+            if (bertChannel->hasCDRModeChannel())
+            {
+                bertChannel->getCDRMode()->setVisualState(false);
+                // Clear the data and CDR locked state for the channel:
+                bertChannel->getCDRMode()->setDataLockLampState(BertUILamp::OFF);
+                bertChannel->getCDRMode()->setDataLocked(false);
+                bertChannel->getCDRMode()->setCDRLockLampState(BertUILamp::OFF);
+                bertChannel->getCDRMode()->setCDRLocked(false);
+            }
+        }
+        qDebug() << "--Enbale LMX Clock...";
+        emit SetLMXEnable(true);
+          // Nb: Enabling the LMX will trigger a full resync event which should restart the PG - see LMX class
+        cdrModeRunning = false;
+        qDebug() << "--OK!";
+    }
+}
+
+
+/*!
+ \brief CDR Mode Settings Changed
+ Triggered by a change to a setting on the CDR mode page. Resets the
+ CDR mode settings accordingly.
+ \param core The Gennum core to apply change to (0 or 1 supported,
+             depending on how many cores the board has).
+             Specifying core = -1 will search for all CDR mode
+             channels in the UI and set up each one. This is used
+             when the global CDR Mode Enable checkbox is checked.
+ */
+void BertWindow::cdrModeSettingsChanged(int core)
+{
+    if (!cdrModeRunning) qDebug() << "CDR Mode Settings Changed but CDR mode not running!";
+
+    if (!cdrModeRunning) return;   // CDR mode not enabled; No point changing settings.
+
+    qDebug() << "CDR Mode Settings Changed; Core: " << core << " (-1 = all)";
+
+    // Loop through all channels; If a channel has CDR Mode controls defined,
+    // and that channel matches the core we want to set up, read the CDR mode
+    // settings for the channel and set up the gennum core...
+    foreach (BertChannel *bertChannel, bertChannels)
+    {
+        if (!bertChannel->hasCDRModeChannel()) continue;
+        int thisCore = bertChannel->getCore();
+        if (core == -1 || thisCore == core)
+        {
+            const int metaLane = bertChannel->getMetaLane();
+            qDebug() << "CDR Mode Settings Change for Core " << thisCore << "; metaLane: " << metaLane;
+
+            // Clear the data / cdr locked state for the channel when settings change:
+            bertChannel->getCDRMode()->setDataLockLampState(BertUILamp::OFF);
+            bertChannel->getCDRMode()->setDataLocked(false);
+            bertChannel->getCDRMode()->setCDRLockLampState(BertUILamp::OFF);
+            bertChannel->getCDRMode()->setCDRLocked(false);
+
+            const int channelSelIndex = bertChannel->getCDRMode()->getCDRChannelSelectIndex();
+            const int divideIndex = bertChannel->getCDRMode()->getCDRDivideRatioIndex();
+            qDebug() << "--Set up GT1724 for CDR Mode: channelSelIndex: " << channelSelIndex << "; divideIndex: " << divideIndex;
+            emit ConfigCDR(metaLane, cdrModeChanSelIndexToLane(channelSelIndex), divideIndex);
+        }
+    }
+}
+
+
+
+
+/*!
+ \brief CDR Loop BandWidth Settings Changed
+ Triggered by a change to a setting on the CDR mode page. Resets the
+ LBW settings accordingly.
+ \param core The Gennum core to apply change to (0 or 1 supported,
+             depending on how many cores the board has).
+             Specifying core = -1 will search for all CDR mode
+             channels in the UI and set up each one. This is used
+             when the global CDR Mode Enable checkbox is checked.
+ */
+void BertWindow::cdrLBWChanged(int core)
+{
+    if (!cdrModeRunning) qDebug() << "LBW Settings Changed but CDR mode not running!";
+
+    if (!cdrModeRunning) return;   // CDR mode not enabled; No point changing settings.
+
+    qDebug() << "LBW Settings Changed; Core: " << core << " (-1 = all)";
+
+    // Loop through all channels; If a channel has CDR Mode controls defined,
+    // and that channel matches the core we want to set up, read the CDR mode
+    // settings for the channel and set up the gennum core...
+    foreach (BertChannel *bertChannel, bertChannels)
+    {
+        if (!bertChannel->hasCDRModeChannel()) continue;
+        int thisCore = bertChannel->getCore();
+        if (core == -1 || thisCore == core)
+        {
+            const int metaLane = bertChannel->getMetaLane();
+            qDebug() << "LBW Settings Change for Core " << thisCore << "; metaLane: " << metaLane;
+
+          //Switch between Rate Dependent and Rate Independent
+            int rateDependent = bertChannel->getCDRMode()->getRateDependentIndex();
+            int dataRate = bertChannel->getCDRMode()->getDateRateIndex();
+            int rateDivider = bertChannel->getCDRMode()->getRateDividerIndex();
+            int targetLBW = bertChannel->getCDRMode()->getTargetLBWIndex();
+
+            if(rateDependent == 1)
+            {
+                bertChannel->getCDRMode()->setRateDependentIndex(false);
+            }
+            else
+            {
+                bertChannel->getCDRMode()->setRateDependentIndex(true);
+            }
+
+            qDebug() << "--Set up LBW for GT1724: core: " << core;
+            emit ConfigLBW(dataRate, rateDependent, rateDivider, targetLBW);
+        }
+    }
+}
+
+
+
 
 /*!
  \brief Main window Close Event
@@ -1850,7 +2303,7 @@ void BertWindow::closeEvent(QCloseEvent *event)
 
 QWidget *BertWindow::makeUI(QWidget *parent)
 {
-    int x, y, vGrid;
+    int x, y, vGrid, Y;
 
     // ======== Connect Tab: =========================================
     x = 25; y = 28;
@@ -1889,20 +2342,54 @@ QWidget *BertWindow::makeUI(QWidget *parent)
 
     // ======== Clock Synth Tab: =========================================
     vGrid = 35;
-    x = 16; y = 30;
-    groupClock = new BertUIGroup("groupClock", parent, "Frequency Synthesizer Configuration",                 -1,  0, 0, 600, 0);
+    x = 16; y = 30; Y = 310;
+    groupClock = new BertUIGroup("groupClock", parent, "  PG: 300Mbps-30Gbps       ED: 12.3Gbps-14.5Gbps / 24.6Gbps-29Gbps ",                 -1,  0, 0, 600, 0);
     groupClock->setMinimumHeight(150);
-    new                          BertUILabel  ("", groupClock, "Synthesizer Frequency:",                      -1,  x, y,        135 );
-    new                          BertUILabel  ("", groupClock, "Synthesizer VCO Lock:",                       -1,  x, y+=vGrid, 135 );
+    new                          BertUILabel  ("", groupClock, "Standard Data Rate:",                      -1,  x, y+=vGrid,        135 );
+    new                          BertUILabel  ("", groupClock, "Arbitrary Date Rate:",                          -1,  x+360, y,    135 );
+    checkAnyRateOn         = new BertUICheckBox ("checkAnyRateOn",       groupClock, "",                    -1,  x+525, y,    21 );
+    new                          BertUILabel  ("", groupClock, "Gbps:",                                    -1,  224, y+=vGrid, 50 );
+    new                          BertUILabel  ("", groupClock, "Mbps:",                                    -1,  387, y, 50 );
+    new                          BertUILabel  ("", groupClock, "Kbps:",                                    -1,  552, y, 50 );
+    buttonSetAnyRate       = new BertUIButton   ("buttonSetAnyRate",          groupClock, "Set AnyRate",         -1,  x,    y+=vGrid, 111 );
+    new                          BertUILabel  ("", groupClock, "Synthesizer Lock:",                             -1,  x, y+=vGrid, 135 );
     new                          BertUILabel  ("", groupClock, "Trigger Out Divide Ratio:",                   -1,  x, y+=vGrid, 135 );
-    new                          BertUILabel  ("", groupClock, "Trigger RF Output Power:",                    -1,  x, y+=vGrid, 135 );
-    x = 166; y = 30;
-    listLMXFreq            = new BertUIList   ("listLMXFreq",            groupClock, QStringList(),           -1,  x, y,        201 );
-    lampLMXLockMaster      = new BertUILamp   ("", groupClock, "Lock", "No Lock", BertUILamp::OFF,            -1,  x, y+=vGrid, 100 );
-    lampLMXLockSlave       = new BertUILamp   ("", groupClock, "Lock", "No Lock", BertUILamp::OFF,            -1,  x+110, y,    100 );
+//    new                          BertUILabel  ("", groupClock, "Trigger RF Output Power:",                    -1,  x, y+=vGrid, 135 );
+    new                          BertUILabel  ("", groupClock, "Out_ISET",                                    -1,  185, Y, 80 );
+    new                          BertUILabel  ("", groupClock, "OutA_PWR",                                    -1,  348, Y, 80 );
+    new                          BertUILabel  ("", groupClock, "OutB_PWR",                                    -1,  513, Y, 80 );
+    buttonSetRFPower       = new BertUIButton   ("buttonSetRFPower",          groupClock, "Set RF Power",         -1,  x,    Y+=vGrid, 111 );
+    buttonSetAnyRate -> setEnabled(false);
 
-    listLMXTrigOutDivRatio = new BertUIList   ("listLMXTrigOutDivRatio", groupClock, QStringList(),           -1,  x, y+=vGrid, 91  );
-    listLMXTrigOutPower    = new BertUIList   ("listLMXTrigOutPower",    groupClock, QStringList(),           -1,  x, y+=vGrid, 91  );
+    x = 166; y = 30;
+    listLMXFreq           = new BertUIList   ("listLMXFreq",            groupClock, QStringList(),           -1,  x, y+=vGrid,        151 );
+    list10Gbps            = new BertUIList   ("list10Gbps",             groupClock, {"0","1","2","3"},           -1,  x, 135,  45 );
+    list1Gbps             = new BertUIList   ("list1Gbps",              groupClock, {"0","1","2","3","4","5","6","7","8","9"},           -1,  x+49, 135,  45 );
+    list100Mbps           = new BertUIList   ("list100Mbps",            groupClock, {"0","1","2","3","4","5","6","7","8","9"},           -1,  x+115, 135,  45 );
+    list10Mbps            = new BertUIList   ("list10Mbps",             groupClock, {"0","1","2","3","4","5","6","7","8","9"},           -1,  x+164, 135,  45 );
+    list1Mbps             = new BertUIList   ("list1Mbps",              groupClock, {"0","1","2","3","4","5","6","7","8","9"},           -1,  x+213, 135,  45 );
+    list100Kbps           = new BertUIList   ("list100Kbps",            groupClock, {"0","1","2","3","4","5","6","7","8","9"},           -1,  x+279, 135,  45 );
+    list10Kbps            = new BertUIList   ("list10Kbps",             groupClock, {"0","1","2","3","4","5","6","7","8","9"},           -1,  x+328, 135,  45 );
+    list1Kbps             = new BertUIList   ("list1Kbps",              groupClock, {"0","1","2","3","4","5","6","7","8","9"},           -1,  x+377, 135,  45 );
+    lampLMXLockMaster      = new BertUILamp   ("", groupClock, "Lock", "No Lock", BertUILamp::OFF,            -1,  x, 170, 100 );
+    lampLMXLockSlave       = new BertUILamp   ("", groupClock, "Lock", "No Lock", BertUILamp::OFF,            -1,  x+110, 455,    100 );
+
+    listOut_ISET           = new BertUIList   ("listOut_ISET",           groupClock, {"0","1","2","3"},                                   -1,  x,     Y,  90 );
+    listOutA_PWR_1         = new BertUIList   ("listOutA_PWR_1",         groupClock, {"0","1","2","3","4","5","6"},                               -1,  x+164, Y,  45 );
+    listOutA_PWR_0         = new BertUIList   ("listOutA_PWR_0",         groupClock, {"0","1","2","3","4","5","6","7","8","9"},           -1,  x+213, Y,  45 );
+
+    listOutB_PWR_1         = new BertUIList   ("listOutB_PWR_1",         groupClock, {"0","1","2","3","4","5","6"},                               -1,  x+328, Y,  45 );
+    listOutB_PWR_0         = new BertUIList   ("listOutB_PWR_0",         groupClock, {"0","1","2","3","4","5","6","7","8","9"},           -1,  x+377, Y,  45 );
+    listLMXTrigOutDivRatio = new BertUIList   ("listLMXTrigOutDivRatio", groupClock, QStringList(),           -1,  x, 205, 91  );
+//    listLMXTrigOutPower    = new BertUIList   ("listLMXTrigOutPower",    groupClock, QStringList(),           -1,  x, y+=vGrid, 91  );
+    list10Gbps->setEnabled(false);
+    list1Gbps->setEnabled(false);
+    list100Mbps->setEnabled(false);
+    list10Mbps->setEnabled(false);
+    list1Mbps->setEnabled(false);
+    list100Kbps->setEnabled(false);
+    list10Kbps->setEnabled(false);
+    list1Kbps->setEnabled(false);
 
     layoutClockSynth = new QVBoxLayout(parent);
     layoutClockSynth->addWidget(groupClock);
@@ -2052,6 +2539,18 @@ QWidget *BertWindow::makeUI(QWidget *parent)
     tabAnalysisBathtub = new QWidget(parent);
     tabAnalysisBathtub->setLayout(layoutBP);
 
+    // === CDR Mode Tab: =====================================================
+    layoutCDR = new QVBoxLayout(parent);
+
+    paneCDRCheckBoxes  = new BertUIPane     ("", this,  -1, 0, 0,  200, 80 );
+    new                      BertUILabel    ("",                   paneCDRCheckBoxes, "Enable Clock Recovery",  -1, 16,  30, 135     );
+    checkCDRModeEnable = new BertUICheckBox ("checkCDRModeEnable", paneCDRCheckBoxes, "",                 -1, 155, 30, 50      );
+
+    layoutCDR->addWidget(paneCDRCheckBoxes);
+    tabCDRControls = new QWidget(parent);
+    tabCDRControls->setLayout(layoutCDR);
+
+
     // === About Tab: ========================================================
 #ifdef BERT_DEMO_CHANNELS
     QString versionNumberExtra = QString(" DEMO");
@@ -2059,10 +2558,10 @@ QWidget *BertWindow::makeUI(QWidget *parent)
     QString versionNumberExtra = QString("");
 #endif
     tabAbout = new QWidget(parent);
-    tabAbout->setMinimumSize(QSize(globals::TAB_WIDTH_MIN, globals::TAB_HEIGHT_MIN));
+    tabAbout->setMinimumSize(QSize(BertBranding::TAB_WIDTH_MIN, BertBranding::TAB_HEIGHT_MIN));
     x = 20; y = 20; vGrid = 26;
-    new BertUIImage    ("", tabAbout, globals::LOGO_FILE_LARGE, x, y, globals::LOGO_SIZE_LARGE.width(), globals::LOGO_SIZE_LARGE.height());
-    x = 30; y += globals::LOGO_SIZE_LARGE.height();
+    new BertUIImage    ("", tabAbout, BertBranding::LOGO_FILE_LARGE, x, y, BertBranding::LOGO_SIZE_LARGE.width(), BertBranding::LOGO_SIZE_LARGE.height());
+    x = 30; y += BertBranding::LOGO_SIZE_LARGE.height();
 
     // Information from Instrument:
     new BertUITextArea ("",                              tabAbout, "Model:",              0, x,     y+=vGrid, 135 , 30);
@@ -2083,16 +2582,16 @@ QWidget *BertWindow::makeUI(QWidget *parent)
     // Application Information:
     new BertUITextArea ("",               tabAbout, "Application Version:",     0, x,     y+=vGrid, 135, 30);
     new BertUITextArea ("",               tabAbout, QString("%1 %2, %3")
-                                                    .arg(globals::BUILD_VERSION)
+                                                    .arg(BertModel::BUILD_VERSION)
                                                     .arg(versionNumberExtra)
-                                                    .arg(globals::BUILD_DATE),  0, x+136, y,        314, 30);
+                                                    .arg(BertModel::BUILD_DATE),  0, x+136, y,        314, 30);
     // Clock defs version:
     new BertUITextArea ("",                               tabAbout, "Synthesizer Config:",  0, x,     y+=vGrid, 135, 30);
     new BertUITextArea ("InstrumentSynthConfigVersion_0", tabAbout, "Unknown",              0, x+136, y,        314, 30);
 
     // Copyright Text:
     y += 10;
-    new BertUITextArea ("",               tabAbout, globals::ABOUT_BLURB,       -1, x,     y+=vGrid, 550, 160);
+    new BertUITextArea ("",               tabAbout, BertBranding::ABOUT_BLURB,       -1, x,     y+=vGrid, 550, 160);
 
     // Invisible widget to temporarily hold hidden tabs:
     hiddenTabs = new QWidget(tabAbout);
@@ -2100,29 +2599,33 @@ QWidget *BertWindow::makeUI(QWidget *parent)
 
     // Titles for Tabs:
     const QString TAB_CONNECT_TITLE("Setup Communication");
-    const QString TAB_CLOCKSYNTH_TITLE("Clock Synthesizer");
+    const QString TAB_CLOCKSYNTH_TITLE("Data Rate Selection");
     const QString TAB_PG_TITLE("Pattern Generator Control");
     const QString TAB_ED_TITLE("Error Detector Control");
     const QString TAB_EYESCAN_TITLE("Eye Scan && BER Contour");
     const QString TAB_BATHTUB_TITLE("Bathtub Plot");
+    const QString TAB_CDR_TITLE("Clock Recovery Mode");
     const QString TAB_ABOUT_TITLE("About");
 
     // ======== Main Content Tabs: ==========================
     tabWidget = new BertUITabs("tabWidget", parent, 0, 0, 100, 100);
     tabWidget->addTab(tabConnect,          TAB_CONNECT_TITLE);
     tabWidget->addTab(tabClockSynth,       TAB_CLOCKSYNTH_TITLE);
-    tabWidget->addTab(tabPatternGenerator, TAB_PG_TITLE);
     tabWidget->addTab(tabAbout,            TAB_ABOUT_TITLE);
+
     // The following tabs are NOT added now; They are hidden until AFTER connect,
     // and only displayed for some instrument types (determined by EEPROM data):
+    // * tabPatternGenerator
     // * tabErrorDetector
     // * tabAnalysisEyeScan
     // * tabAnalysisBathtub
     // Instead, these tab widgets are added to a hidden widget on the
     // 'About' tab; This ensures that all signals are connected, etc:
+    tabPatternGenerator->setParent(hiddenTabs);
     tabErrorDetector->setParent(hiddenTabs);
     tabAnalysisEyeScan->setParent(hiddenTabs);
     tabAnalysisBathtub->setParent(hiddenTabs);
+    tabCDRControls->setParent(hiddenTabs);
 
     // Set up Tab IDs for easy identification of which tab is selected:
     tabConnect->setProperty          ("TabID", TAB_CONNECT);
@@ -2131,6 +2634,7 @@ QWidget *BertWindow::makeUI(QWidget *parent)
     tabErrorDetector->setProperty    ("TabID", TAB_ED);
     tabAnalysisEyeScan->setProperty  ("TabID", TAB_EYESCAN);
     tabAnalysisBathtub->setProperty  ("TabID", TAB_BATHTUB);
+    tabCDRControls->setProperty      ("TabID", TAB_CDR);
     tabAbout->setProperty            ("TabID", TAB_ABOUT);
 
     // Give each tab a title property for use when adding hidden tabs:
@@ -2140,16 +2644,18 @@ QWidget *BertWindow::makeUI(QWidget *parent)
     tabErrorDetector->setProperty    ("TabTitle", TAB_ED_TITLE);
     tabAnalysisEyeScan->setProperty  ("TabTitle", TAB_EYESCAN_TITLE);
     tabAnalysisBathtub->setProperty  ("TabTitle", TAB_BATHTUB_TITLE);
+    tabCDRControls->setProperty      ("TabTitle", TAB_CDR_TITLE);
     tabAbout->setProperty            ("TabTitle", TAB_ABOUT_TITLE);
 
-    // Give each tab a property to identify what type of instrument it applies to:
-    tabConnect->setProperty          ("InstrumentType", SMARTEST_ALL);
-    tabClockSynth->setProperty       ("InstrumentType", SMARTEST_ALL);
-    tabPatternGenerator->setProperty ("InstrumentType", SMARTEST_ALL);
-    tabErrorDetector->setProperty    ("InstrumentType", SMARTEST_SB_ONLY);
-    tabAnalysisEyeScan->setProperty  ("InstrumentType", SMARTEST_SB_ONLY);
-    tabAnalysisBathtub->setProperty  ("InstrumentType", SMARTEST_SB_ONLY);
-    tabAbout->setProperty            ("InstrumentType", SMARTEST_ALL);
+    // Give each tab a property to identify what type of instrument function it applies to:
+    tabConnect->setProperty          ("TabType", SMARTEST_ALL);
+    tabClockSynth->setProperty       ("TabType", SMARTEST_ALL);
+    tabPatternGenerator->setProperty ("TabType", SMARTEST_PG);
+    tabErrorDetector->setProperty    ("TabType", SMARTEST_ED);
+    tabAnalysisEyeScan->setProperty  ("TabType", SMARTEST_ED);
+    tabAnalysisBathtub->setProperty  ("TabType", SMARTEST_ED);
+    tabCDRControls->setProperty      ("TabType", SMARTEST_ED);  // TODO: SMARTEST_CDR);
+    tabAbout->setProperty            ("TabType", SMARTEST_ALL);
 
     // List of refs to our tab contents. Used when turning tabs on / off later:
     tabs.append(tabConnect);
@@ -2158,6 +2664,7 @@ QWidget *BertWindow::makeUI(QWidget *parent)
     tabs.append(tabErrorDetector);
     tabs.append(tabAnalysisEyeScan);
     tabs.append(tabAnalysisBathtub);
+    tabs.append(tabCDRControls);
     tabs.append(tabAbout);
 
 
@@ -2166,7 +2673,7 @@ QWidget *BertWindow::makeUI(QWidget *parent)
     QHBoxLayout *layoutStatusArea = new QHBoxLayout(parent);
     widgetStatusArea->setLayout(layoutStatusArea);
     statusMessage = new BertUIStatusMessage("textStatusMessage", parent, "", 0, 0, 460);
-    BertUIImage *logoSmall = new BertUIImage("", parent, globals::LOGO_FILE_SMALL, 0, 0, globals::LOGO_SIZE_SMALL.width(), globals::LOGO_SIZE_SMALL.height());
+    BertUIImage *logoSmall = new BertUIImage("", parent, BertBranding::LOGO_FILE_SMALL, 0, 0, BertBranding::LOGO_SIZE_SMALL.width(), BertBranding::LOGO_SIZE_SMALL.height());
     layoutStatusArea->setContentsMargins(0, 0, 0, 0);
     layoutStatusArea->addWidget(statusMessage);
     layoutStatusArea->addWidget(logoSmall);
@@ -2197,7 +2704,7 @@ void BertWindow::makeUIChannel(int channel, QWidget *parent)
     if (channel > maxChannel) maxChannel = channel;
     if (bertChannels.value(channel)) return;  // Channel already added.
 
-    BertChannel *newChannel = new BertChannel(channel, parent);
+    BertChannel *newChannel = new BertChannel(channel, parent, BertModel::ShowCDRBypassSelect());
     bertChannels.insert(channel, newChannel);
     if (newChannel->getTemperature())
     {
@@ -2228,6 +2735,11 @@ void BertWindow::makeUIChannel(int channel, QWidget *parent)
     uiWidgetAddHeight(paneBPCheckBoxes, HEIGHT_ADD_CHECKBOX);
     layoutBPChannels->addWidget(newChannel->getBathtub(), newChannel->getRow(), newChannel->getCol(), 1, 1);
 
+    if (newChannel->hasCDRModeChannel())
+    {
+        layoutCDR->addWidget(newChannel->getCDRMode());
+        newChannel->getCDRMode()->setVisualState(false);
+    }
 }
 
 
@@ -2300,11 +2812,11 @@ void BertWindow::makeUIFactoryOptions(QWidget *parent)
     int x = 16;
     int y = 20;
     int vGrid = 30;
-    groupFactoryOptions = new BertUIGroup("", parent, "Write EEPROM Data", -1, 0, 0, 600, 550);
-    new                        BertUILabel     ("",                                 groupFactoryOptions, "Model:",              0, x,     y,        135 );
-    inputModel           = new BertUITextInput ("SetInstrumentModel_0",             groupFactoryOptions, "",                    0, x+136, y,        155 );
-    listEEPROMModel      = new BertUIList      ("listEEPROMModel",                  groupFactoryOptions, globals::BERT_MODELS,  0, x+296, y,        140 );
-    new                        BertUILabel     ("",                                 groupFactoryOptions, "Max 20 chrs.",        0, x+460, y,        100 );
+    groupFactoryOptions = new BertUIGroup("", parent, "Write EEPROM Data", -1, 0, 0, 600, 560);
+    new                        BertUILabel     ("",                                 groupFactoryOptions, "Model:",               0, x,     y,        135 );
+    inputModel           = new BertUITextInput ("SetInstrumentModel_0",             groupFactoryOptions, "",                     0, x+136, y,        155 );
+    listEEPROMModel      = new BertUIList      ("listEEPROMModel",                  groupFactoryOptions, BertModel::BERT_MODELS, 0, x+296, y,        140 );
+    new                        BertUILabel     ("",                                 groupFactoryOptions, "Max 20 chrs.",         0, x+460, y,        100 );
 
     new                        BertUILabel     ("",                                 groupFactoryOptions, "Serial Number:",      0, x,     y+=vGrid, 135 );
     inputSerial          = new BertUITextInput ("SetInstrumentSerial_0",            groupFactoryOptions, "",                    0, x+136, y,        250 );
@@ -2342,6 +2854,14 @@ void BertWindow::makeUIFactoryOptions(QWidget *parent)
     buttonWriteProfilesToEEPROM = new BertUIButton ("buttonWriteProfilesToEEPROM", groupFactoryOptions, "Write ALL TCS Defs to EEPROM", 0, x+136, y+=vGrid, 250 );
     buttonVerifyLMXProfiles     = new BertUIButton ("buttonVerifyLMXProfiles",     groupFactoryOptions, "Verify Clock Defs",            0, x+136, y+=vGrid, 250 );
 
+//  new                               BertUILabel  ("",                            groupFactoryOptions, "Firmware Download:",           0, x,     y+=vGrid, 135 );
+//  new                               BertUILabel  ("",                            groupFactoryOptions, "Firmware from FILES:",         0, x,     y+=vGrid, 135 );
+//  listFirmwareVersion         = new BertUIList   ("FirmwareVersion",             groupFactoryOptions, BertModel::BERT_FIRMWARES,      0, x+136, y,        250 );
+ // new                               BertUILabel  ("",                            groupFactoryOptions, "Fireware from EEPROM:",        0, x,     y+=vGrid, 135 );
+ // listEEPROMFirmware          = new BertUIList   ("EEPROMFirmware",              groupFactoryOptions, QStringList(),                  0, x+136, y,        250 );
+ // buttonWriteFirmwareToEEPROM = new BertUIButton ("buttonWriteFirmwareToEEPROM", groupFactoryOptions, "Write Fireware to EEPROM",     0, x+136, y+=vGrid, 250 );
+ // buttonVerifyFirmware        = new BertUIButton ("buttonVerifyFirmware",        groupFactoryOptions, "Verify Firmware",              0, x+136, y+=vGrid, 250 );
+
     layoutConnect->addWidget(groupFactoryOptions, 0, 1, 3, 1);
 }
 
@@ -2367,6 +2887,7 @@ void BertWindow::makeUIDummyFactoryOptions(QWidget *parent)
 bool BertWindow::checkFactoryKey()
 {
     return true;
+
     int result;
     QString keyFile = globals::getAppPath() + QString("\\factory.key");
     qDebug() << "Checking for factory key file...";
@@ -2381,6 +2902,7 @@ bool BertWindow::checkFactoryKey()
     {
         qDebug() << "Empty key file!";
         return false;  // Key error
+
     }
 
     QCryptographicHash keyHash(QCryptographicHash::Sha3_256);
@@ -2427,7 +2949,11 @@ qDebug() << "*** makeUIRefClock...";
     valueRefClockFreqIn    = new BertUITextInfo ("valueRefClockFreqIn",   groupRefClock, "",               -1,  x, y+=vGrid, 201 );
     valueRefClockFreqOut   = new BertUITextInfo ("valueRefClockFreqOut",  groupRefClock, "",               -1,  x, y+=vGrid, 201 );
 
+ //   layoutClockSynth = new QVBoxLayout(parent);
     layoutClockSynth->addWidget(groupRefClock);
+
+//    tabClockSynth = new QWidget();
+//    tabClockSynth->setLayout(layoutClockSynth);
 
     // Manually connect "currentIndexChanged" signal from Profiles list:
     // This won't be connected automatically since the UI is only created later

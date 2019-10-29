@@ -65,15 +65,18 @@ public:
                  double errors, double errorsTotal);                \
     void EyeScanProgressUpdate(int lane, int type, int percent);    \
     void EyeScanError(int lane, int type, int code);                \
-    void EyeScanFinished(int lane, int type, QVector<double> data, int xRes, int yRes);
+    void EyeScanFinished(int lane, int type, QVector<double> data, int xRes, int yRes);\
 
 #define GT1724_SLOTS \
     void CommsCheck(int metaLane); \
     void GetTemperature(int metaLane); \
-    void ConfigPG(int metaLane, int pattern, double bitRate); \
     void ConfigSetDefaults(int metaLane, double bitRate); \
+    void ConfigPG(int metaLane, int pattern, double bitRate); \
+    void ConfigCDR(int metaLane, int inputLane, int freqDivider); \
+    void ConfigLBW(int dataRate, int rateDependent, int rateDivider, int targetLBW); \
     void SetLaneOn(int lane, bool laneOn, bool powerDownOnMute); \
     void SetOutputSwing(int lane, int swingIndex); \
+    void SetOutputSwingB(int lane, int swingIndex); \
     void SetLaneInverted(int lane, bool inverted); \
     void SetDeEmphasis(int lane, int level, int prePost); \
     void SetCrossPoint(int lane, int crossPointIndex); \
@@ -85,7 +88,7 @@ public:
     void EDErrorInject(int lane); \
     void EyeScanStart(int lane, int type, int hStep, int vStep, int vOffset, int countRes); \
     void EyeScanRepeat(int lane); \
-    void EyeScanCancel(int lane);
+    void EyeScanCancel(int lane); \
 
 #define GT1724_CONNECT_SIGNALS(CLIENT, GT1724) \
     connect(GT1724, SIGNAL(EDLosLol(int, bool, bool)),         CLIENT, SLOT(EDLosLol(int, bool, bool)));                            \
@@ -99,16 +102,19 @@ public:
                                                                                                                                     \
     connect(CLIENT, SIGNAL(CommsCheck(int)),                   GT1724, SLOT(CommsCheck(int)));                                      \
     connect(CLIENT, SIGNAL(GetTemperature(int)),               GT1724, SLOT(GetTemperature(int)));                                  \
-    connect(CLIENT, SIGNAL(ConfigPG(int, int, double)),        GT1724, SLOT(ConfigPG(int, int, double)));                           \
     connect(CLIENT, SIGNAL(ConfigSetDefaults(int, double)),    GT1724, SLOT(ConfigSetDefaults(int, double)));                       \
+    connect(CLIENT, SIGNAL(ConfigPG(int, int, double)),        GT1724, SLOT(ConfigPG(int, int, double)));                           \
+    connect(CLIENT, SIGNAL(ConfigCDR(int, int, int)),          GT1724, SLOT(ConfigCDR(int, int, int)));                             \
+    connect(CLIENT, SIGNAL(ConfigLBW(int, int, int, int)),     GT1724, SLOT(ConfigLBW(int, int, int, int)));             \
     connect(CLIENT, SIGNAL(SetLaneOn(int, bool, bool)),        GT1724, SLOT(SetLaneOn(int, bool, bool)));                           \
     connect(CLIENT, SIGNAL(SetOutputSwing(int, int)),          GT1724, SLOT(SetOutputSwing(int, int)));                             \
+    connect(CLIENT, SIGNAL(SetOutputSwingB(int, int)),          GT1724, SLOT(SetOutputSwingB(int, int)));                             \
     connect(CLIENT, SIGNAL(SetLaneInverted(int, bool)),        GT1724, SLOT(SetLaneInverted(int, bool)));                           \
     connect(CLIENT, SIGNAL(SetDeEmphasis(int, int, int)),      GT1724, SLOT(SetDeEmphasis(int, int, int)));                         \
     connect(CLIENT, SIGNAL(SetCrossPoint(int, int)),           GT1724, SLOT(SetCrossPoint(int, int)));                              \
     connect(CLIENT, SIGNAL(SetEQBoost(int, int)),              GT1724, SLOT(SetEQBoost(int, int)));                                 \
-    connect(CLIENT, SIGNAL(SetForceCDRBypass(int, int, double)),                                                                   \
-                                                               GT1724, SLOT(SetForceCDRBypass(int, int, double)));                 \
+    connect(CLIENT, SIGNAL(SetForceCDRBypass(int, int, double)),                                                                    \
+                                                               GT1724, SLOT(SetForceCDRBypass(int, int, double)));                  \
     connect(CLIENT, SIGNAL(SetEDOptions(int, int, bool, bool, int, bool, bool)),                                                    \
                                                                GT1724, SLOT(SetEDOptions(int, int, bool, bool, int, bool, bool)));  \
     connect(CLIENT, SIGNAL(GetLosLol(int)),                    GT1724, SLOT(GetLosLol(int)));                                       \
@@ -119,6 +125,7 @@ public:
     connect(CLIENT, SIGNAL(EyeScanRepeat(int)),                GT1724, SLOT(EyeScanRepeat(int)));                                   \
     connect(CLIENT, SIGNAL(EyeScanCancel(int)),                GT1724, SLOT(EyeScanCancel(int)));                                   \
     BERT_COMPONENT_CONNECT_SIGNALS(CLIENT, GT1724)
+
 
 signals:
     // Signals which are specific to a GT1724:
@@ -132,20 +139,35 @@ public slots:
 private:
 
     // GT1724 Instrument Functions:
-    int  configPG          (int pattern, double bitRate);
-    int  configSetDefaults (double bitRate);
 
-    int  setLaneOn (int lane, bool laneOn, bool powerDownOnMute);
-    bool getLaneOn (int lane);
+    // configXXX methods: These set up the GT1724 for a certain mode of operation.
+    // They may run several macros, including "Mission Low Power", "Configure Device Mode", etc.
 
-    /* UNUSED:
+    int  configSetDefaults (double bitRate);                 // Set up all default settings (cold boot / resync only)
+
+    int  configPG          (int pattern, double bitRate);    // Set up GT1724 for Pattern Generator mode
+    int  configCDR         (int inputLane, int freqDivider); // Set up GT1724 for Clock Data Recovery Mode
+    int  configLBW         (int dataRate, int rateDependent, int rateDivider, int targetLBW); //Set up GT1724 for certain LBW
+
+    // getXXX / setXXX methods: These methods get or set the state of a specific GT1724
+    // option, and can generally be used while the PG or ED is running. Note however
+    // some may have undesirable effects on certain modes of operation; e.g.
+    // powering down the De-Emphasis path with setPDDeEmphasis will also stop the
+    // PRBS checker from working.
+
+    /* UNUSED: These methods are no longer used and the code hasn't been
+     * updated for a while. Probably need some work to resurrect!
     int  setAutoBypassOnLOL (int lane, bool autoBypassOn);
     bool getAutoBypassOnLOL (int lane);
     int setPDLaneOutput (const uint8_t lane, const uint8_t powerDown);
     int getPDLaneOutput (const uint8_t lane, uint8_t *powerDown);
     */
 
-    int  setOutputSwing              (int lane, int swing);
+    int  setLaneOn (int lane, bool laneOn, bool powerDownOnMute);
+    bool getLaneOn (int lane);
+
+    int  setOutputSwing              (int lane, int swing);    
+    int  setOutputSwingB              (int lane, int swing);
     int  getOutputSwings             ();
     int  configOutputDriverMainSwing (int swings[4]);
     int  queryOutputDriverMainSwing  (int swings[4]);
@@ -192,7 +214,9 @@ private:
 
     // *** Lists of settings with lookups: ***
     static const QList<int> PG_OUTPUT_SWING_LOOKUP;
+    static const QList<int> PG_OUTPUT_SWING_LOOKUP_B;
     static const QStringList PG_OUTPUT_SWING_LIST;
+    static const QStringList PG_OUTPUT_SWING_LIST_B;
 
     static const QStringList PG_PATTERN_LIST;
 
@@ -220,9 +244,11 @@ private:
     static const QStringList EYESCAN_COUNTRES_LIST;
     static const int EYESCAN_COUNTRES_DEFAULT;
 
-    static const QStringList CRD_BYPASS_OPTIONS_LIST;
-    static const int CRD_BYPASS_OPTIONS_DEFAULT;
+    static const QStringList CDR_BYPASS_OPTIONS_LIST;
+    static const int CDR_BYPASS_OPTIONS_DEFAULT;
 
+    static const QStringList CDR_FREQDIV_OPTIONS_LIST;
+    static const int CDR_FREQDIV_OPTIONS_DEFAULT;
 
     // *** GT1724 Register Addresses: ***
     static const uint8_t GTREG_CDR_REG_0      = 0x00;
@@ -238,9 +264,25 @@ private:
     static const uint16_t GTREG_LOS_REG_0           = 0x0404;  // = 1028d (16 bit address)
     static const uint16_t GTREG_LOSL_OUTPUT         = 0x0411;  // = 1041d (16 bit address)
     static const uint16_t GTREG_LOSL_OUTPUT_LATCHED = 0x0412;  // = 1042d (16 bit address)
+    static const uint16_t GTREG_LBW_REG             = 0x0471;  // = 1137d (16 bit address)
 
     static const double EXT_CLOCK_FREQ_MIN;
     static const double EXT_CLOCK_FREQ_MAX;
+
+    const uint8_t LBW_1667[12] = {0x51, 0x51, 0x51, 0x54, 0x55, 0x56, 0x58, 0x5A, 0x7F, 0x7F, 0x7F, 0x7F};
+    const uint8_t LBW_2500[12] = { 0x36, 0x36, 0x36, 0x38, 0x39,0x39, 0x3B, 0x3C, 0x6C, 0x7A, 0x7F, 0x7F};
+    const uint8_t LBW_5M_25M[132] = {0x18, 0x21, 0x2B, 0x36, 0x3E, 0x48, 0x51, 0x5B, 0x64, 0x6E, 0x77,
+                                     0x18, 0x22, 0x2B, 0x36, 0x3E, 0x48, 0x52, 0x5B, 0x65, 0x6E, 0x78,
+                                     0x18, 0x22, 0x2C, 0x36, 0x3F, 0x49, 0x52, 0x5C, 0x66, 0x6F, 0x79,
+                                     0x1A, 0x24, 0x2F, 0x39, 0x43, 0x4E, 0x58, 0x62, 0x6D, 0x77, 0x7F,
+                                     0x1B, 0x25, 0x30, 0x3B, 0x46, 0x50, 0x5B, 0x66, 0x70, 0x7B, 0x7F,
+                                     0x1B, 0x26, 0x31, 0x3C, 0x47, 0x52, 0x5D, 0x68, 0x73, 0x7D, 0x7F,
+                                     0x1C, 0x28, 0x33, 0x3F, 0x4B, 0x55, 0x61, 0x6C, 0x77, 0x7F, 0x7F,
+                                     0x1E, 0x2A, 0x36, 0x42, 0x4F, 0x5B, 0x6F, 0x73, 0x7F, 0x7F, 0x7F,
+                                     0x60, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F,
+                                     0x79, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F,
+                                     0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F,
+                                     0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F};
 
     const globals::MacroFileInfo *macroVersion = &(globals::MACRO_FILES[0]);
        // Pointer to information about the macro version for the chip (initially unknown)
@@ -260,8 +302,10 @@ private:
                                   // (Purely for display purposes for users).
                                   // lane 0-3 = Core 1, Lane 4-7 = Core 2, etc.
 
-    int forceCDRBypass0 = CRD_BYPASS_OPTIONS_DEFAULT;  // CDR Bypass setting for Lane 0/1
-    int forceCDRBypass2 = CRD_BYPASS_OPTIONS_DEFAULT;  // CDR Bypass setting for Lane 2/3
+    int forceCDRBypass0 = CDR_BYPASS_OPTIONS_DEFAULT;  // CDR Bypass setting for Lane 0
+    int forceCDRBypass1 = CDR_BYPASS_OPTIONS_DEFAULT;  // CDR Bypass setting for Lane 1 (only used for 4 channel PG mode)
+    int forceCDRBypass2 = CDR_BYPASS_OPTIONS_DEFAULT;  // CDR Bypass setting for Lane 2
+    int forceCDRBypass3 = CDR_BYPASS_OPTIONS_DEFAULT;  // CDR Bypass setting for Lane 3 (only used for 4 channel PG mode)
 
 
     typedef struct edParameters_t

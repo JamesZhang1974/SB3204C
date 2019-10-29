@@ -85,6 +85,7 @@ signals:
     void I2CWorkerConnect(QString port);
     void I2CWorkerDisconnect();
     void I2CProbeAdaptor();
+    void I2CConfigureAdaptor();
     void I2CWorkerOp(int nBytesToWrite,
                      const char *dataWrite,
                      int nBytesToRead,
@@ -109,13 +110,6 @@ private:
     static const uint8_t I2C_DIR = 0x57;   // Build custom I2C sequences
     static const uint8_t I2C_TST = 0x58;   // Check for the existence of an I2C device on the bus
     static const uint8_t ISS_CMD = 0x5A;   // Custom commands for the USB-ISS adaptor
-
-    // Pre-defined I2C adaptor ops:
-    static const uint8_t I2C_OP_GET_SERIAL[];
-    static const uint8_t I2C_OP_GET_SERIAL_SIZE;
-
-    static const uint8_t I2C_OP_SET_MODE[];
-    static const uint8_t I2C_OP_SET_MODE_SIZE;
 
     bool isOpen;
     std::unique_ptr<I2CCommsWorker> commsWorker;
@@ -143,6 +137,7 @@ public slots:
     void I2CWorkerConnect(QString port);
     void I2CWorkerDisconnect();
     void I2CProbeAdaptor();
+    void I2CConfigureAdaptor();
     void I2CWorkerOp(int nBytesToWrite,
                      const char *dataWrite,
                      int nBytesToRead,
@@ -166,6 +161,13 @@ private:
     static const uint8_t ISS_CMD = 0x5A;   // Custom commands for the USB-ISS adaptor
     static const uint8_t I2C_OP_GET_VERSION[];
     static const uint8_t I2C_OP_GET_VERSION_SIZE;
+
+    static const uint8_t I2C_OP_GET_SERIAL[];
+    static const uint8_t I2C_OP_GET_SERIAL_SIZE;
+
+    static const uint8_t I2C_OP_SET_MODE[];
+    static const uint8_t I2C_OP_SET_MODE_SIZE;
+
 
     // Expected I2C Adaptor Version Info:
     static const uint8_t I2C_ADAPTOR_VERSION[];

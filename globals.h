@@ -70,12 +70,15 @@ public:
     static const int INVALID_DATA        = -21;   // Bad text data or no data to parse, or bad data read from EEPROM
     static const int END_OF_DATA         = -22;   // No more data to read (e.g. from list of items in EEPROM)
     static const int BAD_CHECKSUM        = -23;   // Checksum from EEPROM record didn't match checksum of data in record
+    static const int UNKNOWN_MODEL       = -24;   // Couldn't read model code form EEPROM
 
     static const int MISSING_GT1724      = -50;   // Couldn't detect any GT1724 IC in the system
     static const int MISSING_LMX         = -51;   // Couldn't detect an LMX clock module
     static const int MISSING_LMX_DEFS    = -52;   // Couldn't find any register definition files for LMX clock module
-    static const int MISSING_PCA         = -53;   // Couldn't detect a PCA9557 IO controller module
     static const int MISSING_EEPROM      = -54;   // Couldn't detect an M24M02 EEPROM
+    static const int MISSING_PCA9557    = -55;   // Couldn't detect a PCA9557A IO controller module
+    static const int MISSING_TLC59108    = -56;   // Couldn't detect a TLC59108 LED module
+
 
     static const int NOT_IMPLEMENTED     = -99;   // Feature or method not implemented on this hardware
 
@@ -88,47 +91,15 @@ public:
 
     static const int ALL_LANES = -1;  // Use to specify ALL lanes, or where no lane is required.
 
-    // Component I2C Addresses:
-    static const QList<uint8_t> I2C_ADDRESSES_GT1724;
-    static const QList<uint8_t> I2C_ADDRESSES_LMX2594;
-    static const QList<uint8_t> I2C_ADDRESSES_PCA9557;
-    static const QList<uint8_t> I2C_ADDRESSES_M24M02;
-    static const QList<uint8_t> I2C_ADDRESSES_SI5340;
-
     static const double BELOW_DETECTION_LIMIT;   // Placeholder for values which are below the "floor" of the bathtub plot
 
     static const QString FACTORY_KEY_HASH;
-
-    static const QString BUILD_VERSION;
-    static const QString BUILD_DATE;
-    static const QString BRAND;        // Smartest / Coherent / CEYear
-    static const QString APP_TITLE;    // Appears in title bar of window
-    static const QString BUILD_MODEL;  // Applies to CEYear brand ONLY; Smartest build is not model specific.
-
-    // Tweaks to control appearance and branding of app:
-    // See branding.cpp for implementation
-    static const bool    USE_CHANNEL_BG_COLORS;
-    static const QString LOGO_FILE_SMALL;
-    static const QSize   LOGO_SIZE_SMALL;
-    static const QString LOGO_FILE_LARGE;
-    static const QSize   LOGO_SIZE_LARGE;
-    static const QString ABOUT_BLURB;
-    // Style sheets
-    static const QString BG_STYLESHEET;
-    static const QString MAIN_TAB_STYLE;
-    static const QString UI_STYLESHEET;
-
-    static const QStringList BERT_MODELS;
-
-    // Layout:
-    static const int TAB_WIDTH_MIN = 1000;
-    static const int TAB_HEIGHT_MIN = 550;
 
     /*!
      \brief General purpose sleep method
      \param milliSeconds  Number of milliseconds to sleep for
     */
-    static void sleep(unsigned int milliSeconds) { Sleep((DWORD)milliSeconds); }
+    static void sleep(unsigned int milliSeconds) { Sleep(static_cast<DWORD>(milliSeconds)); }
 
 
     /*!

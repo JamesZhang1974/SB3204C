@@ -7,12 +7,21 @@
 */
 
 #include <QDebug>
+#include <QFile>
+#include <QString>
+#include <QIODevice>
+#include <QDataStream>
+#include <QByteArray>
+#include <QMap>
+#include <cstdlib>
+#include <BertFile.h>
 #include <QTime>  // For testing / profiling
+
 
 #include "M24M02.h"
 
 // Debug Macro for EEPROM Read / Write:
-//#define BERT_EEPROM_DEBUG
+// #define BERT_EEPROM_DEBUG
 #ifdef BERT_EEPROM_DEBUG
   #define DEBUG_EEPROM(MSG) qDebug() << "\t\t" << MSG;
 #endif
@@ -123,6 +132,31 @@ int M24M02::init()
 
 
 /*!
+ \brief Read Model Code from EEPROM strings
+ If the code can't be found, returns "NONE"
+ \return Model code (String)
+*/
+QString M24M02::ReadModelCode()
+{
+    DEBUG_EEPROM("M24M02: EEPROM Read Model Code")
+    QString model;
+    int result;
+    result = loadString(MODEL, model);
+    if (result == globals::OK)
+    {
+        return model;
+    }
+    else
+    {
+        qDebug() << "M24M02: Error reading model code: " << result;
+        return "NONE";
+    }
+}
+
+
+
+
+/*!
  \brief Read Frequency Profiles from M24M02 EEPROM
  \param   deviceID           Device ID check: If ths doesn't match the device, INVALID_BOARD is returned.
  \param   frequencyProfiles  Reference to list of frequency profiles. Any existing profiles are deleted;
@@ -195,7 +229,6 @@ int M24M02::readFrequencyProfiles(int deviceID, QList<LMXFrequencyProfile> &freq
 }
 
 
-
 /*!
  \brief Write Frequency Profiles to M24M02 EEPROM
  \param   deviceID           Device ID check: If ths doesn't match the device, INVALID_BOARD is returned.
@@ -212,24 +245,23 @@ int M24M02::writeFrequencyProfiles(int deviceID, QList<LMXFrequencyProfile> &fre
     }
 
     DEBUG_EEPROM("M24M02: EEPROM Write " << frequencyProfiles.length() << " Frequency Profiles - Device " << deviceID);
-    uint16_t address = 0;
-    int result = globals::OK;
 
 
-     result = clearPROFILES();
-     if (result != globals::OK)
-     {
-            DEBUG_EEPROM("M24M02: Error delete Frequency Profiles (" << result << ")")
-            return result;
-     }
+    int result = clearPROFILES();
+    if (result != globals::OK)
+    {
+        DEBUG_EEPROM("M24M02: Error delete Frequency Profiles (" << result << ")")
+        return result;
+    }
 
+     uint16_t address = 0;
+     result = globals::OK;
     //###### Time Recording - for testing ##########
     QTime t;
     t.start();
     //##############################################
 
     // -- Write profile count as first 2 bytes: --
-    address = 0;
     result = storeUInt16(PAGE_FREQ_PROFILES, &address, static_cast<uint16_t>(frequencyProfiles.length()), nullptr);
     if (result != globals::OK)
     {
@@ -263,12 +295,106 @@ int M24M02::writeFrequencyProfiles(int deviceID, QList<LMXFrequencyProfile> &fre
 
 
 
+/*!
+ \brief Write Firmware to M24M02 EEPROM
+ \param   deviceID           Device ID check: If ths doesn't match the device, INVALID_BOARD is returned.
+ \param   firmware           Reference to a firmware to write to EEPROM
+ \return globals::OK
+ \return [error code]
+ */
+
+
+void M24M02::WriteFirmware(int deviceID)
+{
+    if (deviceID != this->deviceID)
+    {
+        DEBUG_EEPROM("M24M02: Wrong device ID" << device ID);
+        return;
+    }
+
+    QString firmwarePath = globals::getAppPath() + QString("/firmwares/GT1706-rev-3-5-2-B.bin");
+    QFile firmwareFile(firmwarePath);
+
+    if(firmwareFile.open(QIODevice::ReadOnly))
+    {
+       qDebug() <<" Firmware found!"<<firmwareFile.size();
+    };
+
+    auto const firmwareLength = firmwareFile.size();
+
+
+    uint8_t *dataBuffer = new uint8_t[firmwareLength];
+    uint16_t i = 0;
+
+    QDataStream in(&firmwareFile);
+    while(i < firmwareLength)
+    {
+        in >> dataBuffer[i];
+        qDebug() <<" Firmware data address is " << i <<"data value is " <<INT_AS_HEX(dataBuffer[i],2);
+        i ++;
+    };
+
+
+    qDebug() <<" Firmware data is ready";
+
+    //###### Time Recording - for testing ##########
+    QTime t;
+    t.start();
+    //##############################################
+/*
+    uint16_t dataAddress = 0;
+    int result = storeBlock(PAGE_Firmware, &dataAddress, dataBuffer, firmwareLength);
+
+
+    if(result!=globals::OK)
+    {
+         qDebug()<<"M24M02: Firmware written failed!";
+         return;
+    }
+    else
+    {
+         qDebug() <<"M24M02: Firmware written OK";
+
+    };
+*/
+    //Generate ramdon_addresses to read back the data from EEPROM, then compare them with dataBuffer.
+ //   globals::sleep(3000);
+    uint16_t readAddress=0;
+    uint8_t readData = 0;
+
+    for(int j=0; j < firmwareLength; j++)
+    {
+        int result = loadBytes(PAGE_Firmware, &readAddress, &readData, 1);
+        if(result==globals::OK)
+        {
+           qDebug()<<"Read data from EEPROM address"<< readAddress<< "data value" << INT_AS_HEX(readData,2) << "OK!";
+        }
+        else
+        {
+            qDebug() <<"Data readback from EEPROM is wrong!!!";
+        };
+
+    };
+
+    firmwareFile.close();
+    delete [] dataBuffer;
+
+
+    //##############################################
+    qDebug("EEPROM Write time elapsed: %d ms", t.elapsed());
+    //##############################################
+
+
+    return;
+
+}
+
+
 
 
 //---------------------------------------------------------
 // SLOTS
 //---------------------------------------------------------
-
 
 /*!
  * \brief SLOT: Read string data from the EEPROM
@@ -532,7 +658,11 @@ int M24M02::waitStoreAck()
         retryCount++;
         globals::sleep(2);
     }
-    if (result != globals::OK) DEBUG_EEPROM("--WARNING: TIMED OUT without ACK!")
+    if (result != globals::OK)
+    {
+        DEBUG_EEPROM("--WARNING: TIMED OUT without ACK!")
+    }
+
     return result;
 }
 
@@ -966,7 +1096,6 @@ int M24M02::clearEEPROM()
     return globals::OK;
 }
 
-
 /*!
  * \brief Clear EEPROM PAGE_FREQ_PROFILES Memory
  * This method resets the contents of the string table to 0xFF (factory default).
@@ -992,4 +1121,5 @@ int M24M02::clearPROFILES()
 
     return globals::OK;
 }
+
 

@@ -59,23 +59,6 @@
    http://www.robot-electronics.co.uk/htm/usb_iss_tech.htm
 */
 
-// ***** Pre-defined I2C Operations Data Blocks: ****
-const uint8_t I2CComms::I2C_OP_GET_SERIAL[] = { ISS_CMD, 0x03 };
-const uint8_t I2CComms::I2C_OP_GET_SERIAL_SIZE = sizeof(I2C_OP_GET_SERIAL);
-
-const uint8_t I2CComms::I2C_OP_SET_MODE[] = { ISS_CMD, 0x02, 0x40, 0x04 };
-const uint8_t I2CComms::I2C_OP_SET_MODE_SIZE = sizeof(I2C_OP_SET_MODE);
-// Nb: I2C_OP_SET_MODE sets 50 KHz I2C Mode (hardware driver), with IO pins set high (not used).
-
-const uint8_t I2CCommsWorker::I2C_OP_GET_VERSION[] = { ISS_CMD, 0x01 };
-const uint8_t I2CCommsWorker::I2C_OP_GET_VERSION_SIZE = sizeof(I2C_OP_GET_VERSION);
-
-// Expected I2C Adaptor Version Info:
-// Should be Module ID:  7; FW Version:  7; Mode:  64
-const uint8_t I2CCommsWorker::I2C_ADAPTOR_VERSION[] = { 7, 7, 64 };
-
-
-
 I2CComms::I2CComms()
 {
     DEBUG_I2C("I2CComms: Constructor")
@@ -89,6 +72,7 @@ I2CComms::I2CComms()
     connect(this, SIGNAL(I2CWorkerConnect(QString)), commsWorker.get(), SLOT(I2CWorkerConnect(QString)), Qt::BlockingQueuedConnection);
     connect(this, SIGNAL(I2CWorkerDisconnect()),     commsWorker.get(), SLOT(I2CWorkerDisconnect()),     Qt::BlockingQueuedConnection);
     connect(this, SIGNAL(I2CProbeAdaptor()),         commsWorker.get(), SLOT(I2CProbeAdaptor()),         Qt::BlockingQueuedConnection);
+    connect(this, SIGNAL(I2CConfigureAdaptor()),     commsWorker.get(), SLOT(I2CConfigureAdaptor()),     Qt::BlockingQueuedConnection);
     connect(this, SIGNAL(I2CWorkerOp(int, const char *, int, char *)),
                                                      commsWorker.get(), SLOT(I2CWorkerOp(int, const char *, int, char *)),
                                                                                                          Qt::BlockingQueuedConnection);
@@ -166,6 +150,7 @@ int I2CComms::open(const QString port)
         commsClose();
         return globals::GEN_ERROR;
     }
+    emit I2CConfigureAdaptor();
     isOpen = true;
     return globals::OK;
 }
@@ -867,11 +852,43 @@ int I2CComms::i2cOp(const uint8_t  nBytesToWrite,
 
 
 
+
+
+
+
 // ////////////////////////////////////////////////////////////////////////
 // ////////////////////////////////////////////////////////////////////////
 //   I2C Comms Worker
 // ////////////////////////////////////////////////////////////////////////
 // ////////////////////////////////////////////////////////////////////////
+
+
+// ***** Pre-defined I2C Operations Data Blocks: ****
+const uint8_t I2CCommsWorker::I2C_OP_GET_VERSION[] = { ISS_CMD, 0x01 };
+const uint8_t I2CCommsWorker::I2C_OP_GET_VERSION_SIZE = sizeof(I2C_OP_GET_VERSION);
+
+// Expected I2C Adaptor Version Info:
+// Should be Module ID:  7; FW Version:  7; Mode:  64
+const uint8_t I2CCommsWorker::I2C_ADAPTOR_VERSION[] = { 7, 7, 64 };
+
+const uint8_t I2CCommsWorker::I2C_OP_GET_SERIAL[] = { ISS_CMD, 0x03 };
+const uint8_t I2CCommsWorker::I2C_OP_GET_SERIAL_SIZE = sizeof(I2C_OP_GET_SERIAL);
+
+#define ISS_IO_MODE_I2C_S_20KHZ    0x20
+#define ISS_IO_MODE_I2C_S_50KHZ    0x30
+#define ISS_IO_MODE_I2C_S_100KHZ   0x40
+#define ISS_IO_MODE_I2C_S_400KHZ   0x50
+#define ISS_IO_MODE_I2C_H_100KHZ   0x60
+#define ISS_IO_MODE_I2C_H_400KHZ   0x70
+#define ISS_IO_MODE_I2C_H_1000KHZ  0x80
+
+// WORKS! const uint8_t I2CComms::I2C_OP_SET_MODE[] = { ISS_CMD, 0x02, 0x40, 0x04 };
+//  Nb: Above I2C_OP_SET_MODE sets 100 KHz I2C Mode (software driver), with IO pins set high (not used).
+
+const uint8_t I2CCommsWorker::I2C_OP_SET_MODE[] = { ISS_CMD, 0x02, ISS_IO_MODE_I2C_S_100KHZ, 0x55 };
+const uint8_t I2CCommsWorker::I2C_OP_SET_MODE_SIZE = sizeof(I2C_OP_SET_MODE);
+
+
 
 I2CCommsWorker::I2CCommsWorker()
 {}
@@ -1006,6 +1023,33 @@ void I2CCommsWorker::I2CProbeAdaptor()
     }
 }
 
+/*!
+ \brief Slot: Configure I2C Adaptor
+ Loads the adaptor settings pre-configured in I2C_OP_SET_MODE (see defn above)
+*/
+void I2CCommsWorker::I2CConfigureAdaptor()
+{
+    if (!serial->isOpen()) return;
+    DEBUG_I2C("Configuring USB to I2C Adaptor")
+    uint8_t responseData[2] = { 0,0 };
+    I2CWorkerOp((int)I2C_OP_SET_MODE_SIZE,
+                (const char *)I2C_OP_SET_MODE,
+                2, (char *)responseData);
+    if (lastResult != globals::OK)
+    {
+        qDebug() << "Error configuring I2C Adaptor!";
+        return;
+    }
+    if (responseData[0] != 0xFF)
+    {
+        qDebug() << "Error configuring I2C Adaptor: NACK Response!";
+    }
+    else
+    {
+        qDebug() << "I2C Adaptor Configured OK!";
+    }
+}
+
 
 /*!
  \brief Slot: Clear Comms Port
@@ -1059,6 +1103,12 @@ void I2CCommsWorker::serialTimeout()
         exit();
     }
 }
+
+
+
+
+
+
 
 
 

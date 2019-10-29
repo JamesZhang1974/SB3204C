@@ -1,0 +1,11 @@
+<RCC>
+    <qresource prefix="/">
+        <file>CeYearLogo.png</file>
+        <file>CeYearLogoLarge.png</file>
+        <file>MACRO_VER_1_E_0_C.hex</file>
+        <file>MACRO_VER_1_E_1_C.hex</file>
+        <file>SmartestLogoSmall.png</file>
+        <file>CoherentLogoLarge.png</file>
+        <file>CoherentLogoSmall.png</file>
+    </qresource>
+</RCC>

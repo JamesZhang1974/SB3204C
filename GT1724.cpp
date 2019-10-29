@@ -16,6 +16,7 @@
 #include "EyeMonitor.h"
 
 #include "GT1724.h"
+#include "BertModel.h"
 
 // Debug Macro for Register Read / Write:
 //#define BERT_REGISTER_DEBUG
@@ -84,6 +85,9 @@ void GT1724::getOptions()
     emit ListPopulate("listPGAmplitude", laneOffset + 0, PG_OUTPUT_SWING_LIST, 0);
     emit ListPopulate("listPGAmplitude", laneOffset + 2, PG_OUTPUT_SWING_LIST, 0);
 
+    emit ListPopulate("listPGAmplitudeB", laneOffset + 0, PG_OUTPUT_SWING_LIST_B, 0);
+    emit ListPopulate("listPGAmplitudeB", laneOffset + 2, PG_OUTPUT_SWING_LIST_B, 0);
+
     emit ListPopulate("listPGPattern", laneOffset + 0, PG_PATTERN_LIST, 0);
     emit ListPopulate("listPGPattern", laneOffset + 2, PG_PATTERN_LIST, 0);
 
@@ -96,20 +100,49 @@ void GT1724::getOptions()
     emit ListPopulate("listPGCrossPoint", laneOffset + 0, PG_CROSS_POINT_LIST, 0);
     emit ListPopulate("listPGCrossPoint", laneOffset + 2, PG_CROSS_POINT_LIST, 0);
 
-    emit ListPopulate("listPGCDRBypass", laneOffset + 0, CRD_BYPASS_OPTIONS_LIST, CRD_BYPASS_OPTIONS_DEFAULT);
-    emit ListPopulate("listPGCDRBypass", laneOffset + 2, CRD_BYPASS_OPTIONS_LIST, CRD_BYPASS_OPTIONS_DEFAULT);
+    emit ListPopulate("listPGCDRBypass", laneOffset + 0, CDR_BYPASS_OPTIONS_LIST, CDR_BYPASS_OPTIONS_DEFAULT);
+    emit ListPopulate("listPGCDRBypass", laneOffset + 2, CDR_BYPASS_OPTIONS_LIST, CDR_BYPASS_OPTIONS_DEFAULT);
 
-    emit ListPopulate("listEDPattern", laneOffset + 1, ED_PATTERN_LIST, ED_PATTERN_DEFAULT);
-    emit ListPopulate("listEDPattern", laneOffset + 3, ED_PATTERN_LIST, ED_PATTERN_DEFAULT);
+    emit ListPopulate("listCDRDivideRatio", coreNumber-1, CDR_FREQDIV_OPTIONS_LIST, CDR_FREQDIV_OPTIONS_DEFAULT);
 
-    emit ListPopulate("listEDEQBoost", laneOffset + 1, ED_EQ_BOOST_LIST, 0);
-    emit ListPopulate("listEDEQBoost", laneOffset + 3, ED_EQ_BOOST_LIST, 0);
+    if (BertModel::UseFourChanPGMode())
+    {
+        // Four PG channels per Core: No ED options!
+        emit ListPopulate("listPGAmplitude", laneOffset + 1, PG_OUTPUT_SWING_LIST, 0);
+        emit ListPopulate("listPGAmplitude", laneOffset + 3, PG_OUTPUT_SWING_LIST, 0);
 
-    emit ListPopulate("listEyeScanVStep", globals::ALL_LANES, EYESCAN_VHSTEP_LIST, EYESCAN_VHSTEP_DEFAULT);
-    emit ListPopulate("listEyeScanHStep", globals::ALL_LANES, EYESCAN_VHSTEP_LIST, EYESCAN_VHSTEP_DEFAULT);
-    emit ListPopulate("listEyeScanCountRes", globals::ALL_LANES, EYESCAN_COUNTRES_LIST, EYESCAN_COUNTRES_DEFAULT);
-    emit ListPopulate("listBathtubCountRes", globals::ALL_LANES, EYESCAN_COUNTRES_LIST, EYESCAN_COUNTRES_DEFAULT);
-    emit ListPopulate("listBathtubVOffset", globals::ALL_LANES, EYESCAN_VOFF_LIST, EYESCAN_VOFF_DEFAULT);
+        emit ListPopulate("listPGAmplitudeB", laneOffset + 1, PG_OUTPUT_SWING_LIST_B, 0);
+        emit ListPopulate("listPGAmplitudeB", laneOffset + 3, PG_OUTPUT_SWING_LIST_B, 0);
+
+        emit ListPopulate("listPGPattern", laneOffset + 1, PG_PATTERN_LIST, 0);
+        emit ListPopulate("listPGPattern", laneOffset + 3, PG_PATTERN_LIST, 0);
+
+        emit ListPopulate("listPGDeemphLevel", laneOffset + 1, PG_EQ_DEEMPH_LIST, 0);
+        emit ListPopulate("listPGDeemphLevel", laneOffset + 3, PG_EQ_DEEMPH_LIST, 0);
+
+        emit ListPopulate("listPGDeemphCursor", laneOffset + 1, PG_EQ_CURSOR_LIST, 0);
+        emit ListPopulate("listPGDeemphCursor", laneOffset + 3, PG_EQ_CURSOR_LIST, 0);
+
+        emit ListPopulate("listPGCrossPoint", laneOffset + 1, PG_CROSS_POINT_LIST, 0);
+        emit ListPopulate("listPGCrossPoint", laneOffset + 3, PG_CROSS_POINT_LIST, 0);
+
+        emit ListPopulate("listPGCDRBypass", laneOffset + 1, CDR_BYPASS_OPTIONS_LIST, CDR_BYPASS_OPTIONS_DEFAULT);
+        emit ListPopulate("listPGCDRBypass", laneOffset + 3, CDR_BYPASS_OPTIONS_LIST, CDR_BYPASS_OPTIONS_DEFAULT);
+    }
+    else
+    {
+        emit ListPopulate("listEDPattern", laneOffset + 1, ED_PATTERN_LIST, ED_PATTERN_DEFAULT);
+        emit ListPopulate("listEDPattern", laneOffset + 3, ED_PATTERN_LIST, ED_PATTERN_DEFAULT);
+
+        emit ListPopulate("listEDEQBoost", laneOffset + 1, ED_EQ_BOOST_LIST, 0);
+        emit ListPopulate("listEDEQBoost", laneOffset + 3, ED_EQ_BOOST_LIST, 0);
+
+        emit ListPopulate("listEyeScanVStep", globals::ALL_LANES, EYESCAN_VHSTEP_LIST, EYESCAN_VHSTEP_DEFAULT);
+        emit ListPopulate("listEyeScanHStep", globals::ALL_LANES, EYESCAN_VHSTEP_LIST, EYESCAN_VHSTEP_DEFAULT);
+        emit ListPopulate("listEyeScanCountRes", globals::ALL_LANES, EYESCAN_COUNTRES_LIST, EYESCAN_COUNTRES_DEFAULT);
+        emit ListPopulate("listBathtubCountRes", globals::ALL_LANES, EYESCAN_COUNTRES_LIST, EYESCAN_COUNTRES_DEFAULT);
+        emit ListPopulate("listBathtubVOffset", globals::ALL_LANES, EYESCAN_VOFF_LIST, EYESCAN_VOFF_DEFAULT);
+    }
 }
 
 
@@ -139,8 +172,10 @@ int GT1724::init()
     }
 
     // Make sure CDR Bypass is set to default at each boot (default should be OFF!)
-    forceCDRBypass0 = CRD_BYPASS_OPTIONS_DEFAULT;  // CDR Bypass setting for Lane 0/1
-    forceCDRBypass2 = CRD_BYPASS_OPTIONS_DEFAULT;  // CDR Bypass setting for Lane 2/3
+    forceCDRBypass0 = CDR_BYPASS_OPTIONS_DEFAULT;
+    forceCDRBypass1 = CDR_BYPASS_OPTIONS_DEFAULT;
+    forceCDRBypass2 = CDR_BYPASS_OPTIONS_DEFAULT;
+    forceCDRBypass3 = CDR_BYPASS_OPTIONS_DEFAULT;
 
     if (result == globals::MACROS_LOADED)
     {
@@ -210,8 +245,20 @@ int GT1724::getCurrentSettings(int *pattern)
     if (result == globals::OK) result = getForceCDRBypass(laneOffset + 0);  // Query 'Force CDR Bypass' settings
     if (result == globals::OK) result = getForceCDRBypass(laneOffset + 2);  //
 
-    if (result == globals::OK) result = getEQBoost(laneOffset + 1);  // Query EQ Boost setting (ED page)
-    if (result == globals::OK) result = getEQBoost(laneOffset + 3);  //
+    if (BertModel::UseFourChanPGMode())
+    {
+        if (result == globals::OK) result = getDeEmphasis(laneOffset + 1);  //
+        if (result == globals::OK) result = getDeEmphasis(laneOffset + 3);  // Query De-Emphasis and Cross Point settings for PG lanes
+        if (result == globals::OK) result = getCrossPoint(laneOffset + 1);  //
+        if (result == globals::OK) result = getCrossPoint(laneOffset + 3);  //
+        if (result == globals::OK) result = getForceCDRBypass(laneOffset + 1);  // Query 'Force CDR Bypass' settings
+        if (result == globals::OK) result = getForceCDRBypass(laneOffset + 3);  //
+    }
+    else
+    {
+        if (result == globals::OK) result = getEQBoost(laneOffset + 1);  // Query EQ Boost setting (ED page)
+        if (result == globals::OK) result = getEQBoost(laneOffset + 3);  //
+    }
 
     if (result != globals::OK) return result;
 
@@ -221,6 +268,15 @@ int GT1724::getCurrentSettings(int *pattern)
 
     getLaneOn(laneOffset + 0);  // 2 PG output lanes for each GT1724 (0 and 2)...
     getLaneOn(laneOffset + 2);  // Query On / Off (=Mute) status
+
+    if (BertModel::UseFourChanPGMode())
+    {
+        getLaneInverted(laneOffset + 1);
+        getLaneInverted(laneOffset + 3);
+
+        getLaneOn(laneOffset + 1);
+        getLaneOn(laneOffset + 3);
+    }
 
     return globals::OK;
 }
@@ -495,6 +551,86 @@ void GT1724::GetTemperature(int metaLane)
 
 
 
+/*!
+ \brief Load default settings - Run ONCE after connect
+
+ This method sets various PG parameters, e.g. output swing and
+ De-Emphasis. It also sets up the pattern generator with the
+ default pattern and starts it (by calling config PG).
+   SLOT!
+
+ \param metaLane   Used to select the GT1724 core to configure; 0 = 1st, 4 = 2nd, etc.
+ \param bitRate    Instrument bit rate (bits/sec); Used to select certain bitrate
+                   dependant options when configuring the GT1724.
+*/
+void GT1724::ConfigSetDefaults(int metaLane, double bitRate)
+{
+    DEBUG_GT1724("GT1724: ConfigSetDefaults signal for lane " << metaLane)
+    LANE_FILTER(metaLane);
+    int result = configSetDefaults(bitRate);
+    // Echo back the new settings to the client
+    int pattern = 0;
+    if (result== globals::OK) result = getCurrentSettings(&pattern);
+    // Send the results:
+    emit Result(result, metaLane);
+}
+// Implementation of ConfigSetDefaults
+int GT1724::configSetDefaults(double bitRate)
+{
+    DEBUG_GT1724("GT1724: ConfigSetDefaults on Lane " << laneOffset)
+
+    int result;
+
+    // Make sure CDR Bypass is set to default (default should be OFF!)
+    forceCDRBypass0 = CDR_BYPASS_OPTIONS_DEFAULT;
+    forceCDRBypass1 = CDR_BYPASS_OPTIONS_DEFAULT;
+    forceCDRBypass2 = CDR_BYPASS_OPTIONS_DEFAULT;
+    forceCDRBypass3 = CDR_BYPASS_OPTIONS_DEFAULT;
+
+    result = configPG(2, bitRate);                                 // --- Set up pattern generator (default pattern PRBS31)
+    RETURN_ON_ERROR("GT1724: Config Set Defaults: PG may not be correctly set up!");
+
+    uint8_t swingData[4] = { 0xA0, 0xA0, 0xA0, 0xA0 };             // --- Configure output driver main swing to 800 mV (all lanes)... Lane value = [lane mV] / 5; 0xA0 = 160d = 800 mV
+    result = runMacro(0x61, swingData, 4, NULL, 0 );     //
+    RETURN_ON_ERROR("GT1724: Config Set Defaults: Failed to set output swing");
+
+    result                            = setEQBoost(0, 0);          // --- Set EQ boost to 0
+    if (result == globals::OK) result = setEQBoost(2, 0);
+    RETURN_ON_ERROR("GT1724: Config PG: Error setting EQ boost for lane 0 or 2");
+
+    result                            = setDeEmphasis(0, 5, 0);    // --- Set default De-Emphasis to 1.9 dBm of Post-cursor
+    if (result == globals::OK) result = setDeEmphasis(2, 5, 0);    //
+    RETURN_ON_ERROR("GT1724: Config Set Defaults: Failed to set up de-emphasis");
+
+    // Make sure PG output lanes are ON:
+    result                            = setLaneOn(0, true, false);  // --- Enable / unmute outputs for PG lanes
+    if (result == globals::OK) result = setLaneOn(2, true, false);  //
+    RETURN_ON_ERROR("GT1724: Config Set Defaults: Failed to turn on outputs");
+
+    // 4 PG channel mode:
+    if (BertModel::UseFourChanPGMode())
+    {
+        result                            = setEQBoost(1, 0);          // --- Set EQ boost to 0
+        if (result == globals::OK) result = setEQBoost(3, 0);
+        RETURN_ON_ERROR("GT1724: Config PG: Error setting EQ boost for lane 1 or 3");
+
+        result                            = setDeEmphasis(1, 5, 0);    // --- Set default De-Emphasis to 1.9 dBm of Post-cursor
+        if (result == globals::OK) result = setDeEmphasis(3, 5, 0);    //
+        RETURN_ON_ERROR("GT1724: Config Set Defaults: Failed to set up de-emphasis");
+
+        // Make sure PG output lanes are ON:
+        result                            = setLaneOn(1, true, false);  // --- Enable / unmute outputs for PG lanes
+        if (result == globals::OK) result = setLaneOn(3, true, false);  //
+        RETURN_ON_ERROR("GT1724: Config Set Defaults: Failed to turn on outputs");
+    }
+
+    DEBUG_GT1724("GT1724: PG default setup completed OK!")
+    return globals::OK;
+}
+
+
+
+
 
 /*!
   \brief Configure the pattern generator
@@ -503,6 +639,7 @@ void GT1724::GetTemperature(int metaLane)
     * Pattern
     * Clock synth frequency
     * Clock synth RF output level
+
   This method resets the pattern generator and set up the lanes. It selects
   the requested pattern and turns on the output drivers.
   Note this method DOESN'T set various other parameters which can be
@@ -527,6 +664,11 @@ void GT1724::ConfigPG(int metaLane, int pattern, double bitRate)
     // Nb: Only one pattern for all PG lanes, so send a list select for both lanes:
     emit ListSelect("listPGPattern", laneOffset + 0, pattern);
     emit ListSelect("listPGPattern", laneOffset + 2, pattern);
+    if (BertModel::UseFourChanPGMode())
+    {
+        emit ListSelect("listPGPattern", laneOffset + 1, pattern);
+        emit ListSelect("listPGPattern", laneOffset + 3, pattern);
+    }
     if (result == globals::OK) emit ShowMessage("OK.");
     // Send the results:
     emit Result(result, metaLane);
@@ -548,116 +690,182 @@ int GT1724::configPG(int pattern, double bitRate)
     result = runSimpleMacro(0x60, 0x08);      // --- LB to PRBS gen
     RETURN_ON_ERROR("GT1724: Config PG: LB to PRBS gen failed");
 
-    // Run device multi-cast mode to route PRBS.
-    // PRBS to channels 0 and 2: Nb: Assume lanes 1 and 3 will get data from inputs!
-    // Nb: Calling with 0x05 (LB to CDR): Shouldn't be needed.
-    // result = runSimpleMacro(0x64, 0x05);   // --- Config device multi-cast mode: Lanes 0 and 2 get LB to CDR
-    // RETURN_ON_ERROR("GT1724: Config PG: Lane setup failed");
-
-    result = runSimpleMacro(0x64, 0x15);      // --- Config device multi-cast mode: Lanes 0 and 2 get PRBS Gen to CDR
-    RETURN_ON_ERROR("GT1724: Config PG: Lane setup failed");
-
-    result                            = setPDDeEmphasis(0, false);  // --- Power up the De-Emphasis path
-    if (result == globals::OK) result = setPDDeEmphasis(1, false);  //
-    if (result == globals::OK) result = setPDDeEmphasis(2, false);  //
-    if (result == globals::OK) result = setPDDeEmphasis(3, false);  //
-    RETURN_ON_ERROR("GT1724: Config PG: Error turning on De-Emphasis path");
-
-    // REMOVED: Stops the PRBS checker from working.
-    //result                            = setPDDeEmphasis(1, 1);  // --- Power DOWN de-emphasis and output driver on lane 1 and 3 (UNUSED output)
-    //if (result == globals::OK) result = setPDDeEmphasis(3, 1);
-    //RETURN_ON_ERROR("GT1724: Config PG: Error powering down de-emphasis path for lane 1 or 3");
-
-    // Power down main path driver for lanes 1 and 3 (unused outputs; reduces noise)
-    result                            = setPDLaneMainPath(1, 1);  // --- Power DOWN Main path driver on lane 1 and 3 (UNUSED output)
-    if (result == globals::OK) result = setPDLaneMainPath(3, 1);
-    RETURN_ON_ERROR("GT1724: Config PG: Error powering down de-emphasis path for lane 1 or 3");
-
-    result = setLosEnable(1);                                // --- Turn on LOS detect power
-    RETURN_ON_ERROR("GT1724: Config PG: Failed to turn on LOS detect");
-
-    DEBUG_GT1724("GT1724: Change PG pattern to " << pattern)
-    result = setPRBSOptions(pattern, 0, 0, 1);               // --- Select PG pattern (Macro 0x58)
-       // vcoFreq=0, clockSource=0, enable=1
-    RETURN_ON_ERROR("GT1724: Config PG: Error setting PG pattern");
-
-    // Turn on CDR bypass for PG channels
-    // (NOTE: Only useful when running as a PG outside of the range that the CDR can lock)
-    result                            = setForceCDRBypass(0, forceCDRBypass0, bitRate);
-    if (result == globals::OK) result = setForceCDRBypass(2, forceCDRBypass2, bitRate);
-    RETURN_ON_ERROR("GT1724: Config PG: Error setting CDR Bypass");
-
-    /* DEPRECATED
-    if (forceCDRBypass != 0)
+    if (BertModel::UseFourChanPGMode())
     {
-        result                            = setForceCDRBypass(0,true);
-        if (result == globals::OK) result = setForceCDRBypass(2,true);
+        // ====== 4 x PG Mode: ======================
+        // Run device multi-cast mode to route PRBS.
+        // PRBS to ALL channels:
+        result = runSimpleMacro(0x64, 0x1F);      // --- Config device multi-cast mode: All lanes get PRBS Gen to CDR
+        RETURN_ON_ERROR("GT1724: Config PG: Lane setup failed");
+
+        result                            = setPDDeEmphasis(0, false);  // --- Power up the De-Emphasis path
+        if (result == globals::OK) result = setPDDeEmphasis(1, false);  //
+        if (result == globals::OK) result = setPDDeEmphasis(2, false);  //
+        if (result == globals::OK) result = setPDDeEmphasis(3, false);  //
+        RETURN_ON_ERROR("GT1724: Config PG: Error turning on De-Emphasis path");
+
+        result = setLosEnable(1);                                // --- Turn on LOS detect power
+        RETURN_ON_ERROR("GT1724: Config PG: Failed to turn on LOS detect");
+
+        DEBUG_GT1724("GT1724: Change PG pattern to " << pattern)
+                result = setPRBSOptions(pattern, 0, 0, 1);               // --- Select PG pattern (Macro 0x58)
+        // vcoFreq=0, clockSource=0, enable=1
+        RETURN_ON_ERROR("GT1724: Config PG: Error setting PG pattern");
+
+        // Turn on CDR bypass for PG channels
+        // (NOTE: Only useful when running as a PG outside of the range that the CDR can lock)
+        result                            = setForceCDRBypass(0, forceCDRBypass0, bitRate);
+        if (result == globals::OK) result = setForceCDRBypass(1, forceCDRBypass1, bitRate);
+        if (result == globals::OK) result = setForceCDRBypass(2, forceCDRBypass2, bitRate);
+        if (result == globals::OK) result = setForceCDRBypass(3, forceCDRBypass3, bitRate);
+        RETURN_ON_ERROR("GT1724: Config PG: Error setting CDR Bypass");
+
     }
     else
     {
-        result                            = setForceCDRBypass(0,false);
-        if (result == globals::OK) result = setForceCDRBypass(2,false);
+        // ====== 2 x PG, 2 x ED: ===================
+
+        // Run device multi-cast mode to route PRBS.
+        // PRBS to channels 0 and 2: Nb: Assume lanes 1 and 3 will get data from inputs!
+        //   OLD, removed: Calling with 0x05 (LB to CDR): NOT needed.
+        //   result = runSimpleMacro(0x64, 0x05);   // --- Config device multi-cast mode: Lanes 0 and 2 get LB to CDR
+        //   RETURN_ON_ERROR("GT1724: Config PG: Lane setup failed");
+
+        result = runSimpleMacro(0x64, 0x15);      // --- Config device multi-cast mode: Lanes 0 and 2 get PRBS Gen to CDR
+        RETURN_ON_ERROR("GT1724: Config PG: Lane setup failed");
+
+        result                            = setPDDeEmphasis(0, false);  // --- Power up the De-Emphasis path
+        if (result == globals::OK) result = setPDDeEmphasis(1, false);  //
+        if (result == globals::OK) result = setPDDeEmphasis(2, false);  //
+        if (result == globals::OK) result = setPDDeEmphasis(3, false);  //
+        RETURN_ON_ERROR("GT1724: Config PG: Error turning on De-Emphasis path");
+
+        // REMOVED: Stops the PRBS checker from working.
+        //result                            = setPDDeEmphasis(1, 1);  // --- Power DOWN de-emphasis and output driver on lane 1 and 3 (UNUSED output)
+        //if (result == globals::OK) result = setPDDeEmphasis(3, 1);
+        //RETURN_ON_ERROR("GT1724: Config PG: Error powering down de-emphasis path for lane 1 or 3");
+
+        // Power down main path driver for lanes 1 and 3 (unused outputs; reduces noise)
+        result                            = setPDLaneMainPath(1, 1);  // --- Power DOWN Main path driver on lane 1 and 3 (UNUSED output)
+        if (result == globals::OK) result = setPDLaneMainPath(3, 1);
+        RETURN_ON_ERROR("GT1724: Config PG: Error powering down de-emphasis path for lane 1 or 3");
+
+        result = setLosEnable(1);                                // --- Turn on LOS detect power
+        RETURN_ON_ERROR("GT1724: Config PG: Failed to turn on LOS detect");
+
+        DEBUG_GT1724("GT1724: Change PG pattern to " << pattern)
+                result = setPRBSOptions(pattern, 0, 0, 1);               // --- Select PG pattern (Macro 0x58)
+        // vcoFreq=0, clockSource=0, enable=1
+        RETURN_ON_ERROR("GT1724: Config PG: Error setting PG pattern");
+
+
+        // Turn on CDR bypass for PG channels
+        // (NOTE: Only useful when running as a PG outside of the range that the CDR can lock)
+        result                            = setForceCDRBypass(0, forceCDRBypass0, bitRate);
+        if (result == globals::OK) result = setForceCDRBypass(2, forceCDRBypass2, bitRate);
+        RETURN_ON_ERROR("GT1724: Config PG: Error setting CDR Bypass");
     }
-    RETURN_ON_ERROR("GT1724: Config PG: Error setting CDR Bypass");
-    */
 
     DEBUG_GT1724("GT1724: PG Configured OK!")
+    return globals::OK;
+
+}
+
+
+
+
+/*!
+ \brief Config CDR Mode
+   Configures the GT1724 for "CDR mode" (recover clock data).
+   SLOT!
+
+ \param metaLane     Selects the GT1724 core (0, 4, 8, etc)
+ \param inputLane    Select input lane to get signal from (1 or 3)
+ \param freqDivider  Select divide ratio (0 - 5, see GT1724 documentation)
+*/
+void GT1724::ConfigCDR(int metaLane, int inputLane, int freqDivider)
+{
+    LANE_FILTER(metaLane);
+    if (inputLane < 0 || inputLane > 3) return;       // Invalid setting.
+    if (freqDivider < 0 || freqDivider > 5) return;   // Invalid setting.
+    emit ShowMessage("Configuring Clock Recovery Mode");
+    int result = configCDR(inputLane, freqDivider);
+    if (result == globals::OK) emit ShowMessage("OK.");
+    // Send the results:
+    emit Result(result, metaLane);
+}
+// Config CDR Mode command implementation: returns globals::OK or error code
+int GT1724::configCDR(int inputLane, int freqDivider)
+{
+    DEBUG_GT1724("GT1724: Configure CDR on GT1724 at lane " << laneOffset << "; using input lane " << inputLane)
+    int result;
+
+    result = runVerySimpleMacro(0x65);       // --- RESET device configuration (Macro 0x65)
+    RETURN_ON_ERROR("GT1724: Config CDR: Reset failed");
+
+    result = runSimpleMacro(0x60, 0x01);      // --- Mission Low Power
+    RETURN_ON_ERROR("GT1724: Config CDR: Mission Low Power failed");
+
+    // Select RECOVERED CLOCK TO MCK mode:
+    uint8_t param = static_cast<uint8_t>(static_cast<uint8_t>(freqDivider) << 5) | static_cast<uint8_t>(inputLane);
+    result = runSimpleMacro(0x63, param);      // --- Config Device Lane Mode: RECOVERED CLOCK TO MCK
+    RETURN_ON_ERROR("GT1724: Config PG: LB to PRBS gen failed");
+
+    DEBUG_GT1724("GT1724: CDR Mode Configured OK!")
     return globals::OK;
 }
 
 
 
 /*!
- \brief Load default settings - Run ONCE after connect
+ \brief Config Loop BandWidth of CDR
+   Configures the GT1724 for certain LBW (recover clock data).
+   SLOT!
 
- This method sets various PG parameters, e.g. output swing and
- De-Emphasis. It also sets up the pattern generator with the
- default pattern and starts it (by calling config PG).
+
+ \param dataRate       Select a data rate Index from the list
+ \param rateDependent  Select rateDependent or rateIndependent
+ \param rateDivider    Select Rate/1667 or Rate/2500
+ \param targetLBW      Select specified LBW bandwidth from 5MHz - 20MHz
 */
-int GT1724::configSetDefaults(double bitRate)
+void GT1724::ConfigLBW(int dataRate, int rateDependent, int rateDivider, int targetLBW)
 {
-    DEBUG_GT1724("GT1724: ConfigSetDefaults on Lane " << laneOffset)
-
-    int result;
-
-    // Make sure CDR Bypass is set to default (default should be OFF!)
-    forceCDRBypass0 = CRD_BYPASS_OPTIONS_DEFAULT;  // CDR Bypass setting for Lane 0/1
-    forceCDRBypass2 = CRD_BYPASS_OPTIONS_DEFAULT;  // CDR Bypass setting for Lane 2/3
-
-    result = configPG(2, bitRate);                                 // --- Set up pattern generator (default pattern PRBS31)
-    RETURN_ON_ERROR("GT1724: Config Set Defaults: PG may not be correctly set up!");
-
-    uint8_t swingData[4] = { 0xA0, 0xA0, 0xA0, 0xA0 };             // --- Configure output driver main swing to 800 mV (all lanes)... Lane value = [lane mV] / 5; 0xA0 = 160d = 800 mV
-    result = runMacro(0x61, swingData, 4, NULL, 0 );     //
-    RETURN_ON_ERROR("GT1724: Config Set Defaults: Failed to set output swing");
-
-    result                            = setEQBoost(0, 0);          // --- Set EQ boost to 0
-    if (result == globals::OK) result = setEQBoost(2, 0);
-    RETURN_ON_ERROR("GT1724: Config PG: Error setting EQ boost for lane 0 or 2");
-
-    result                            = setDeEmphasis(0, 5, 0);    // --- Set default De-Emphasis to 1.9 dBm of Post-cursor
-    if (result == globals::OK) result = setDeEmphasis(2, 5, 0);    //
-    RETURN_ON_ERROR("GT1724: Config Set Defaults: Failed to set up de-emphasis");
-
-    // Make sure PG output lanes are ON:
-    result                            = setLaneOn(0, true, false);  // --- Enable / unmute outputs for PG lanes
-    if (result == globals::OK) result = setLaneOn(2, true, false);  //
-    RETURN_ON_ERROR("GT1724: Config Set Defaults: Failed to turn on outputs");
-
-    DEBUG_GT1724("GT1724: PG default setup completed OK!")
-    return globals::OK;
-}
-// SLOT to run configSetDefaults (Reset or Resync!)
-void GT1724::ConfigSetDefaults(int metaLane, double bitRate)
-{
-    DEBUG_GT1724("GT1724: ConfigSetDefaults signal for lane " << metaLane)
-    LANE_FILTER(metaLane);
-    int result = configSetDefaults(bitRate);
-    // Echo back the new settings to the client
-    int pattern = 0;
-    if (result== globals::OK) result = getCurrentSettings(&pattern);
+    int result = configLBW(dataRate, rateDependent,rateDivider,targetLBW);
+    if (result == globals::OK) emit ShowMessage("CDR Loop Bandwidth reset OK.");
     // Send the results:
-    emit Result(result, metaLane);
+    //emit Result(result, metaLane);
+}
+// Config CDR LBW command implementation: returns globals::OK or error code
+int GT1724::configLBW(int dataRate, int rateDependent, int rateDivider, int targetLBW)
+{
+    int result;
+    uint8_t lbwVaule = 0;
+
+        if(rateDependent == 0)
+        {
+            if(rateDivider==0)
+            {
+                result = setRegister16(GTREG_LBW_REG, LBW_1667[dataRate]);
+            }
+            else
+            {
+                result = setRegister16(GTREG_LBW_REG, LBW_2500[dataRate]);
+            }
+        }
+        else
+        {
+             result = setRegister16(GTREG_LBW_REG, LBW_5M_25M[dataRate*11 + targetLBW]);
+        }
+    RETURN_ON_ERROR("GT1724: Config LBW: Reset failed");
+    DEBUG_GT1724("GT1724: LBW Configured OK!");
+
+    //read back the register value
+    result = getRegister16(GTREG_LBW_REG,&lbwVaule);
+    RETURN_ON_ERROR("GT1724: Config LBW: READ failed");
+    DEBUG_GT1724("GT1724: read back LBW Vaule, result " << result<<" LBW vaule "<<lbwVaule);
+
+
+    return globals::OK;
 }
 
 
@@ -809,11 +1017,13 @@ void GT1724::SetForceCDRBypass(int lane, int forceCDRBypass, double bitRate)
 // Set CDR Bypass
 int GT1724::setForceCDRBypass(int lane, int forceCDRBypass, double bitRate)
 {
-    bool forceBypassOn = checkForceCDRBypass(forceCDRBypass, bitRate);
-
     int localLane = LANE_MOD(lane);
     if (localLane == 0) forceCDRBypass0 = forceCDRBypass;
+    if (localLane == 1) forceCDRBypass1 = forceCDRBypass;
     if (localLane == 2) forceCDRBypass2 = forceCDRBypass;
+    if (localLane == 3) forceCDRBypass3 = forceCDRBypass;
+
+    bool forceBypassOn = checkForceCDRBypass(forceCDRBypass, bitRate);
 
     qDebug() << "CDR Bypass: Lane " << lane << "; Setting: " << forceCDRBypass << "; Set CDR Force Bypass to " << forceBypassOn;
     // Get current register contents - Force bypass is Bit 0
@@ -839,7 +1049,9 @@ int GT1724::getForceCDRBypass (int lane)
 {
     int localLane = LANE_MOD(lane);
     if (localLane == 0) emit ListSelect("listPGCDRBypass", lane, forceCDRBypass0);
+    if (localLane == 1) emit ListSelect("listPGCDRBypass", lane, forceCDRBypass1);
     if (localLane == 2) emit ListSelect("listPGCDRBypass", lane, forceCDRBypass2);
+    if (localLane == 3) emit ListSelect("listPGCDRBypass", lane, forceCDRBypass3);
     return globals::OK;
 
     /* DEPRECATED: Don't read actual setting from device;
@@ -893,7 +1105,7 @@ int GT1724::setOutputSwing(int lane, int swing)
         return result;
     }
     // Now update the requested lane and set the new values:
-    swings[LANE_MOD(lane)] = swing;
+    swings[LANE_MOD(lane)] = (swings[LANE_MOD(lane)]%20) + swing;
     result = configOutputDriverMainSwing(swings);
     if (result != globals::OK)
     {
@@ -902,6 +1114,40 @@ int GT1724::setOutputSwing(int lane, int swing)
     }
     return globals::OK;
 }
+
+void GT1724::SetOutputSwingB(int lane, int swingIndex)
+{
+    LANE_FILTER(lane);
+    Q_ASSERT(swingIndex >= 0 && swingIndex < PG_OUTPUT_SWING_LOOKUP_B.size());
+    int swing = PG_OUTPUT_SWING_LOOKUP_B.at(swingIndex);
+    int result = setOutputSwingB(lane, swing);
+    emit Result(result, lane);
+    if (result != globals::OK) emit ShowMessage("Error setting channel amplitude.");
+}
+// Command Implementation:
+int GT1724::setOutputSwingB(int lane, int swing)
+{
+    // We can only set ALL swing values (not a single lane), so first we
+    // need to QUERY existing values, then update only the requested lane.
+    int result;
+    int swings[4];
+    result = queryOutputDriverMainSwing(swings); // Query existing swing values
+    if (result != globals::OK)
+    {
+        DEBUG_GT1724("GT1724: Error reading current output swings: " << result)
+        return result;
+    }
+    // Now update the requested lane and set the new values:
+    swings[LANE_MOD(lane)] = swings[LANE_MOD(lane)] - (swings[LANE_MOD(lane)]%20) + swing;
+    result = configOutputDriverMainSwing(swings);
+    if (result != globals::OK)
+    {
+        DEBUG_GT1724("GT1724: Error setting new output swings: " << result)
+        return result;
+    }
+    return globals::OK;
+}
+
 
 /*!
  \brief Get output swings for lanes 0 and 2 (PG Outputs),
@@ -921,14 +1167,20 @@ int GT1724::getOutputSwings()
         DEBUG_GT1724("GT1724: Error getting output swings (" << result << ")")
         return result;
     }
-    int i, swingIndex;
-    for (i=0; i<4; i+=2)
+    int i, swingIndex, swingIndexB, swing, laneStep;
+    laneStep = 2;
+    if (BertModel::UseFourChanPGMode()) laneStep = 1;
+
+    for (i=0; i<4; i+=laneStep)
     {
         // Convert swing register setting (returned by query) to list index:
-        swingIndex = PG_OUTPUT_SWING_LOOKUP.indexOf(swingData[i]);
+        swingIndexB = swingData[i]%20;
+        swing       = swingData[i] - swingIndexB;
+        swingIndex = PG_OUTPUT_SWING_LOOKUP.indexOf(swing);
         DEBUG_GT1724("GT1724: Get Output Swing for Lane " << i << ": Swing = " << swingData[i] << "; Index = " << swingIndex)
         if (swingIndex < 0) swingIndex = 0;
         emit ListSelect("listPGAmplitude", laneOffset + i, swingIndex);
+        emit ListSelect("listPGAmplitudeB", laneOffset + i, swingIndexB);
     }
     return globals::OK;
 }
@@ -1057,6 +1309,11 @@ int GT1724::getPRBSPattern(int *pattern)
     }
     emit ListSelect("listPGPattern", laneOffset + 0, *pattern);
     emit ListSelect("listPGPattern", laneOffset + 2, *pattern);
+    if (BertModel::UseFourChanPGMode())
+    {
+        emit ListSelect("listPGPattern", laneOffset + 1, *pattern);
+        emit ListSelect("listPGPattern", laneOffset + 3, *pattern);
+    }
     return globals::OK;
 }
 
@@ -1661,15 +1918,16 @@ void GT1724::GetEDCount(int lane, double bitRate)
     edParameters_t *ed;
     if (edLane == 0) ed = &ed01;  // Lane 0/1 counts requested.
     else             ed = &ed23;  // Lane 2/3 counts requested.
-    if (!ed->edRunning) return; // Lane not enabled. No point getting ED counts.
-
+    if (!ed->edRunning)
+    {
+        return; // Lane not enabled. No point getting ED counts.
+     }
     // Don't measure errors if not locked:
     if (ed->los || ed->lol)
     {
         emit EDCount(lane, false, 0.0, 0.0, 0.0, 0.0);
         return;
     }
-
     // Calculate emapsed time since last measurement on this channel:
     // Note: "edRunTime->elapsed()" returns the number of milliseconds
     // since edRunTime timer started; BUT it wraps back to 0 every 24 hours
@@ -1854,8 +2112,8 @@ int GT1724::getLosLol(uint8_t los[4], uint8_t lol[4])
 void GT1724::GetLosLol(int metaLane)
 {
     LANE_FILTER(metaLane);
-    uint8_t los[4];
-    uint8_t lol[4];
+    uint8_t los[4] = { 0 };
+    uint8_t lol[4] = { 0 };
     int result = getLosLol(los, lol);
     if (result == globals::OK)
     {
@@ -2517,9 +2775,14 @@ void GT1724::eyeScanCheckForCancel()
 // list to voltage swing value for get / set Output Swing
 // Nb: This is the register setting, i.e. mV / 5:
 const QList<int> GT1724::PG_OUTPUT_SWING_LOOKUP =
-    { 40, 60, 80, 100, 120, 140, 160, 180, 200, 220 };
+    { 40, 60, 80, 100, 120, 140, 160, 180, 200 };
 const QStringList GT1724::PG_OUTPUT_SWING_LIST =
-    { "200 mV", "300 mV", "400 mV", "500 mV", "600 mV", "700 mV", "800 mV", "900 mV", "1 V", "1.1 V" };
+    { "2", "3", "4", "5", "6", "7", "8", "9", "10"};
+
+const QList<int> GT1724::PG_OUTPUT_SWING_LOOKUP_B =
+    { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 };
+const QStringList GT1724::PG_OUTPUT_SWING_LIST_B =
+    { "00","05","10","15","20","25","30","35","40","45","50","55","60","65","70","75","80","85","90","95" };
 
 // -- Pattern names: --------------------
 const QStringList GT1724::PG_PATTERN_LIST =
@@ -2576,10 +2839,12 @@ const int GT1724::EYESCAN_COUNTRES_DEFAULT = 3;
 
 
 // --- Options for Force CDR Bypass: ---
-const QStringList GT1724::CRD_BYPASS_OPTIONS_LIST =
+const QStringList GT1724::CDR_BYPASS_OPTIONS_LIST =
     { "Off", "On", "Auto" };
-const int GT1724::CRD_BYPASS_OPTIONS_DEFAULT = 0;  // Default to "Off"
+const int GT1724::CDR_BYPASS_OPTIONS_DEFAULT = 2;  // Default to "Auto"
 
-
-
+// --- Options for CDR Mode Freq Divider list: ---
+const QStringList GT1724::CDR_FREQDIV_OPTIONS_LIST =
+    { "1/2", "1/4", "1/8", "1/16", "1/64", "1/256" };
+const int GT1724::CDR_FREQDIV_OPTIONS_DEFAULT = 0;
 

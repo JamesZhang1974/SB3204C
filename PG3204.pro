@@ -31,6 +31,8 @@ CONFIG += qt qwt
 
 
 SOURCES += main.cpp\
+    BertBranding.cpp \
+    BertModel.cpp \
            mainwindow.cpp \
            globals.cpp \
            BertWorker.cpp \
@@ -44,6 +46,7 @@ SOURCES += main.cpp\
            BertFile.cpp \
            BertChannel.cpp \
            widgets/BertUIButton.cpp \
+    widgets/BertUICDRChannel.cpp \
            widgets/BertUICheckBox.cpp \
            widgets/BertUIConsts.cpp \
            widgets/BertUIGroup.cpp \
@@ -67,10 +70,11 @@ SOURCES += main.cpp\
     widgets/BertUITextInput.cpp \
     LMXFrequencyProfile.cpp \
     SI5340.cpp \
-    branding.cpp \
     widgets/BertUIBGWidget.cpp
 
 HEADERS += mainwindow.h \
+    BertBranding.h \
+    BertModel.h \
            globals.h \
            BertWorker.h \
            Serial.h \
@@ -83,6 +87,7 @@ HEADERS += mainwindow.h \
            BertFile.h \
            BertChannel.h \
            widgets/BertUIButton.h \
+    widgets/BertUICDRChannel.h \
            widgets/BertUICheckBox.h \
            widgets/BertUIConsts.h \
            widgets/BertUIGroup.h \

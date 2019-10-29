@@ -14,7 +14,7 @@
 
 #include "globals.h"
 #include "I2CComms.h"
-
+#include "BertModel.h"
 #include "BertWorker.h"
 
 
@@ -66,12 +66,22 @@ void BertWorker::CommsConnect(QString port)
     }
 
     emit WorkerShowMessage("Comms Open. Checking system components...");
-    result = findComponents();
+    result = findAndInitEEPROM();
+    if (result == globals::OK)
+    {
+        qDebug() << "Worker: EEPROM found; Reading model code...";
+        QString modelCode = m24m02Set[0]->ReadModelCode();
+        qDebug() << "Worker: Model code: " << modelCode;
+        bool validModel = BertModel::SelectModel(modelCode);
+        result = findComponents();
+        if (result == globals::OK && !validModel) result = globals::UNKNOWN_MODEL;
+    }
+
     // Check hardware set up result:
     switch (result)
     {
     case globals::OK:
-        // Connected and hardware set up OK!
+        // Connected and hardware set up OK! //Ignore it if LED is missing
         emit WorkerShowMessage("Connected.");
         emit StatusConnect(true);
         break;
@@ -81,6 +91,14 @@ void BertWorker::CommsConnect(QString port)
         // Nothing was connected, so disconnect again.
         CommsDisconnect();  // This closes the port and shuts down any hardware components which were set up.
         emit WorkerShowMessage("Connect FAILED: Error setting up system components!");
+        break;
+    case globals::MISSING_EEPROM:
+    case globals::UNKNOWN_MODEL:
+        // EEPROM not found or couldn't determine model!
+        // Lazy way to prevent crash due to "M24M02Added" signal arricing in UI after we've gievn up and deleted the hardware components:
+        // DON'T Call CommsDisconnect() here...
+        emit WorkerShowMessage("Initialisation FAILED: Couldn't find EEPROM!");
+        emit StatusConnect(true);  // Connect anyway; Allows EEPROM write in factory mode.
         break;
     default:
         // Other error code: These conditions may indicate problems
@@ -188,47 +206,21 @@ void BertWorker::slotTimerTick()
 // Private Methods: /////////////////////////////////////////////////////////
 
 /*!
- \brief Find Instrument Components
-        This method checks for hardware components of the system, e.g. GT1724 ICs
-        and LMX clock interface. It instantiates objects as needed to represent the
-        hardware components.
- \return globals::OK   Enough components were detected to make up a working instrument!
- \return [error code]  A critical component was not detected.
- Emits: ShowWorkerMessage to show progress / errors
-        XXXXAdded to inform clients of hardware components which have been added
+ \brief Find And Init EEPROM
+ The EEPROM has it's own find and initialise step, because we need to find out the
+ model code string from the EEPROM before we can initialise other components.
+ \return globals::OK   At least one EEPROM found OK
+ \return [Error code]
 */
-int BertWorker::findComponents()
+int BertWorker::findAndInitEEPROM()
 {
-    qDebug() << "BertWorker: Search for hardware components...";
-
-    // ====== GT1724 ICs: =========================================================
-    // Ping to see if there are GT1724 ICs:
-    GT1724 *gt1724;
-    int laneOffset = 0;
-    foreach(uint8_t address, globals::I2C_ADDRESSES_GT1724)
-    {
-        if (GT1724::ping(comms, address))
-        {
-            qDebug() << "BertWorker: GT1724 IC Found on address " << INT_AS_HEX(address,2) << ", Lane Offset " << laneOffset;
-            gt1724 = new GT1724(comms, address, static_cast<uint8_t>(laneOffset));
-            gt1724Set.append(gt1724);
-            emit GT1724Added(gt1724, laneOffset);
-            laneOffset += 4;
-        }
-    }
-    if (gt1724Set.count() == 0)
-    {
-        // No GT1724 ICs found!
-        qDebug() << "BertWorker: At least ONE GT1724 IC must be present, but none were found!";
-        emit WorkerShowMessage("Core module not found!");
-        return globals::MISSING_GT1724;
-    }
+    qDebug() << "BertWorker: Search for EEPROM...";
 
     // ====== M24M02 EEPROM: ===============================================
     // Ping to see if there are M24M02 ICs:
     M24M02 *m24m02;
     int deviceID = 0;
-    foreach(uint8_t address, globals::I2C_ADDRESSES_M24M02)
+    foreach(uint8_t address, BertModel::GetI2CAddresses_M24M02())
     {
         if (M24M02::ping(comms, address))
         {
@@ -247,11 +239,73 @@ int BertWorker::findComponents()
         return globals::MISSING_EEPROM;
     }
 
+    // ===== INIT the EEPROMs: =========
+    // Call init for each M24M02 IC:
+    int result;
+    foreach(M24M02 *m24m02, m24m02Set)
+    {
+        qDebug() << "BertWorker: Initialise M24M02";
+        result = m24m02->init();
+        if (result != globals::OK)
+        {
+            qDebug() << "BertWorker: Error setting up M24M02 (" << result << ")";
+            emit WorkerShowMessage("Error configuring system!");
+            return result;
+        }
+    }
+    return globals::OK;
+}
+
+
+
+/*!
+ \brief Find Instrument Components
+        This method checks for hardware components of the system, e.g. GT1724 ICs
+        and LMX clock interface. It instantiates objects as needed to represent the
+        hardware components.
+ \return globals::OK   Enough components were detected to make up a working instrument!
+ \return [error code]  A critical component was not detected.
+ Emits: ShowWorkerMessage to show progress / errors
+        XXXXAdded to inform clients of hardware components which have been added
+*/
+int BertWorker::findComponents()
+{
+    qDebug() << "BertWorker: Search for hardware components...";
+    int deviceID = 0;
+    int laneOffset = 0;
+
+
+
+    // ====== GT1724 ICs: =========================================================
+    // Ping to see if there are GT1724 ICs:
+    // 2019-07-25 REMOVED for Federico to test boards:
+
+    GT1724 *gt1724;
+    foreach(uint8_t address, BertModel::GetI2CAddresses_GT1724())
+    {
+        if (GT1724::ping(comms, address))
+        {
+            qDebug() << "BertWorker: GT1724 IC Found on address " << INT_AS_HEX(address,2) << ", Lane Offset " << laneOffset;
+            gt1724 = new GT1724(comms, address, static_cast<uint8_t>(laneOffset));
+            gt1724Set.append(gt1724);
+            emit GT1724Added(gt1724, laneOffset);
+            laneOffset += 4;
+        }
+    }
+    if (gt1724Set.count() == 0)
+    {
+        // No GT1724 ICs found!
+        qDebug() << "BertWorker: At least ONE GT1724 IC must be present, but none were found!";
+        emit WorkerShowMessage("Core module not found!");
+        return globals::MISSING_GT1724;
+    }
+
+
     // ====== LMX Clock Modules: ==================================================
     // Ping to see if there are LMX2594 ICs:
     LMX2594 *lmxClock;
     deviceID = 0;
-    foreach(uint8_t address, globals::I2C_ADDRESSES_LMX2594)
+    foreach(uint8_t address, BertModel::GetI2CAddresses_LMX2594())
     {
         if (LMX2594::ping(comms, address))
         {
@@ -270,34 +324,37 @@ int BertWorker::findComponents()
         return globals::MISSING_LMX;
     }
 
+
     // ====== PCA9557 IO Controllers: =======================================
-    // Ping to see if there are LMX2594 ICs:
+    // Ping to see if there are PCA9557 ICs:
     PCA9557 *pca9557;
     deviceID = 0;
-    foreach(uint8_t address, globals::I2C_ADDRESSES_PCA9557)
+    foreach(uint8_t address, BertModel::GetI2CAddresses_PCA9557())
     {
         if (PCA9557::ping(comms, address))
         {
-            qDebug() << "BertWorker: PCA9557 IO Controller found on address " << INT_AS_HEX(address,2) << ", ID " << deviceID;
+            qDebug() << "BertWorker: PCA9557A IO Controller found on address " << INT_AS_HEX(address,2) << ", ID " << deviceID;
             pca9557 = new PCA9557(comms, address, deviceID);
             pca9557Set.append(pca9557);
-            emit PCA9557Added(pca9557, deviceID);
+            emit PCA9557_Added(pca9557, deviceID);
             deviceID++;
+
         }
     }
     if (pca9557Set.count() == 0)
     {
         // No IO modules found!
-        qDebug() << "BertWorker: At least ONE PCA9557 IO controller must be present, but none were found!";
+        qDebug() << "BertWorker: At least ONE PCA9557A IO controller must be present, but none were found!";
         emit WorkerShowMessage("IO controller module not found!");
-        return globals::MISSING_PCA;
+        return globals::MISSING_PCA9557;
     }
+
 
     // ====== SI5340 Low jitter reference clock IC: ===========================
     // Ping to see if there are SI5340 ICs:
     SI5340 *si5340;
     deviceID = 0;
-    foreach(uint8_t address, globals::I2C_ADDRESSES_SI5340)
+    foreach(uint8_t address, BertModel::GetI2CAddresses_SI5340())
     {
         if (SI5340::ping(comms, address))
         {
@@ -346,16 +403,18 @@ void BertWorker::getComponentOptions()
         lmxClockSet[0]->getOptions();
     }
 
-    // ====== PCA 9557 IO Module: =====================================================
-    // NOTE: SIMPLIFICATION: As for above (PCA only controls trigger divide at the moment).
-    qDebug() << "BertWorker: Get options for IO Controller: PCA9557";
-    if (pca9557Set.count() > 0)
-    {
-        pca9557Set[0]->getOptions();
-    }
 
-    // ===== M24M02 EEPROMs: ==========================================================
-    // SKIPPED: No options to send.
+
+    // ====== PCA 9557A IO Module: =====================================================
+    // NOTE: SIMPLIFICATION: GT1706 reset control and firmware load .
+
+      qDebug() << "BertWorker: Get options for IO Controller: PCA9557";
+      if (pca9557Set.count() > 0)
+      {
+          pca9557Set[0]->getOptions();
+      }
+
+
 
     // ====== SI5340 Low jitter reference clock IC: ===========================
     // NOTE: SIMPLIFICATION: As for LMX clock module (assume UI only has one set of controls for SI5340)
@@ -394,14 +453,13 @@ int BertWorker::initComponents()
     //  -SI5340 Clock Ref generator (if present)
     //      Provides input clock to LMX2594, so should be initialised first
     //      if present (selected models only).
-    //  -M24M02 EEPROM
-    //      Required by LMX2594 (clock profiles stored in EEPROM)
-    //  -LMX2594 Clock Module
+    //  -LMX2594 Clock Module (Nb: Assumes presence of EEPROM from earlier init code!)
     //      Provides clock signal to BERT IC
     //  -PCA9557 I/O Contoller
     //      Controls various GPIO pins, including (possibly) a clock divider
     //      part which comes after the LMX2594
     //  -GT1724 BERT IC
+
 
     // ====== SI5340 Low jitter reference clock IC: ==============================
     // Call init for each SI5340 IC:
@@ -414,20 +472,6 @@ int BertWorker::initComponents()
             qDebug() << "BertWorker: Error setting up SI5340 (" << result << ")";
             emit WorkerShowMessage("Error configuring system!");
             // REMOVE for testing:
-            return result;
-        }
-    }
-
-    // ===== M24M02 EEPROMs: =====================================================
-    // Call init for each M24M02 IC:
-    foreach(M24M02 *m24m02, m24m02Set)
-    {
-        qDebug() << "BertWorker: Initialise M24M02";
-        result = m24m02->init();
-        if (result != globals::OK)
-        {
-            qDebug() << "BertWorker: Error setting up M24M02 (" << result << ")";
-            emit WorkerShowMessage("Error configuring system!");
             return result;
         }
     }
@@ -446,8 +490,9 @@ int BertWorker::initComponents()
         }
     }
 
+
     // ====== PCA9557 IO Modules: ================================================
-    // Call init for each PCA IO module:
+    // Call init for each PCA9557A IO module:
     foreach(PCA9557 *pca9557, pca9557Set)
     {
         qDebug() << "BertWorker: Initialise IO Controller: PCA9557";
@@ -459,6 +504,7 @@ int BertWorker::initComponents()
             return result;
         }
     }
+
 
     // ====== GT1724 ICs: =========================================================
     // Call init for each GT1724 IC:
@@ -506,8 +552,10 @@ void BertWorker::shutdownComponents()
         lmxClockSet.removeLast();
     }
 
-    // ====== PCA IO Controllers: =================================================
-    qDebug() << "BertWorker: REMOVE PCA IO modules...";
+
+
+    // ====== PCA9557 IO Controllers: =================================================
+    qDebug() << "BertWorker: REMOVE PCA9557 IO modules...";
     PCA9557 *pca9557;
     while (pca9557Set.count() > 0)
     {

@@ -31,6 +31,7 @@
 #include "M24M02.h"
 #include "SI5340.h"
 
+
 class BertWorker : public QThread
 {
     Q_OBJECT
@@ -76,9 +77,9 @@ public:
     void ListSerialPorts(QStringList ports);                       \
     void GT1724Added(GT1724 *gt1724, int laneOffset);              \
     void LMX2594Added(LMX2594 *lmx2594, int deviceID);             \
-    void PCA9557Added(PCA9557 *pca9557, int deviceID);             \
+    void PCA9557_Added(PCA9557 *pca9557, int deviceID);         \
     void M24M02Added(M24M02 *m24m02, int deviceID);                \
-    void SI5340Added(SI5340 *si5340, int deviceID);                \
+    void SI5340Added(SI5340 *si5340, int deviceID );         \
     void StatusConnect(bool connected);                            \
     void OptionsSent();                                            \
 
@@ -97,7 +98,7 @@ public:
     connect(WORKER, SIGNAL(ListSerialPorts(QStringList)),     CLIENT, SLOT(ListSerialPorts(QStringList)));     \
     connect(WORKER, SIGNAL(GT1724Added(GT1724 *, int)),       CLIENT, SLOT(GT1724Added(GT1724 *, int)));       \
     connect(WORKER, SIGNAL(LMX2594Added(LMX2594 *, int)),     CLIENT, SLOT(LMX2594Added(LMX2594 *, int)));     \
-    connect(WORKER, SIGNAL(PCA9557Added(PCA9557 *, int)),     CLIENT, SLOT(PCA9557Added(PCA9557 *, int)));     \
+    connect(WORKER, SIGNAL(PCA9557_Added(PCA9557 *, int)),    CLIENT, SLOT(PCA9557_Added(PCA9557 *, int)));   \
     connect(WORKER, SIGNAL(M24M02Added(M24M02 *, int)),       CLIENT, SLOT(M24M02Added(M24M02 *, int)));       \
     connect(WORKER, SIGNAL(SI5340Added(SI5340 *, int)),       CLIENT, SLOT(SI5340Added(SI5340 *, int)));       \
     connect(WORKER, SIGNAL(StatusConnect(bool)),              CLIENT, SLOT(StatusConnect(bool)));              \
@@ -120,6 +121,7 @@ private slots:
 
 private:
     void run();
+    int  findAndInitEEPROM();
     int  findComponents();
     void getComponentOptions();
     int  initComponents();
@@ -132,10 +134,10 @@ private:
     I2CComms *comms = NULL;
 
     // Components of the BERT System:
+    QList<M24M02 *>  m24m02Set;    // There will be 1 x M24M02 IC per board (Serial EEPROM; defines model details)
     QList<GT1724 *>  gt1724Set;    // There will be 2 x GT chips per board
     QList<LMX2594 *> lmxClockSet;  // There will be 1 x LMX clock gen per board
-    QList<PCA9557 *> pca9557Set;   // There will be 1 x PCA9557 IC per board
-    QList<M24M02 *>  m24m02Set;    // There will be 1 x M24M02 IC per board
+    QList<PCA9557 *> pca9557Set;   // There will be 1 x PCA9557A IC per board
     QList<SI5340 *>  si5340Set;    // There may be 1 x SI5340 IC per board (selected models only)
 
 };
